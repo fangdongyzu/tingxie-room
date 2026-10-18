@@ -450,12 +450,6 @@ function renderStudentHome() {
       if (!testSnapshot.exists()) throw new Error("找不到這個測驗代碼。");
       const test = { id: testSnapshot.id, ...testSnapshot.data() };
       if (test.status !== "open") throw new Error("老師已關閉這個測驗。");
-      const submissionSnapshot = await getDoc(doc(db, "submissions", `${test.id}_${state.user.uid}`));
-      if (submissionSnapshot.exists()) {
-        showToast("你已經交過這份測驗，正在開啟結果。");
-        renderStudentResults();
-        return;
-      }
       state.activeTest = test;
       state.studentName = String(data.get("studentName") || "").trim().slice(0, 40);
       renderWriting();
@@ -585,7 +579,10 @@ function renderWriting() {
       });
       renderSubmissionReceipt();
     } catch (error) {
-      showToast(`交卷失敗：${error.message}`);
+      const message = error.code === "permission-denied"
+        ? "無法重複交卷；請到「我的成績」查看。"
+        : `交卷失敗：${error.message}`;
+      showToast(message);
       button.disabled = false;
     }
   });
