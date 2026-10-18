@@ -255,7 +255,7 @@ function renderTeacherTests() {
     <div class="dashboard-grid">
       <form id="create-test" class="card panel-card">
         <h3>建立新測驗</h3>
-        <div class="field"><label for="test-title">聽寫名稱（選填）</label><input id="test-title" name="title" maxlength="80" placeholder="例如：第六課生詞聽寫" /></div>
+        <div class="field"><label for="test-title">聽寫名稱</label><input id="test-title" name="title" maxlength="80" required placeholder="例如：第六課生詞聽寫" /></div>
         <div class="field"><label for="class-name">班級（選填）</label><input id="class-name" name="className" maxlength="60" placeholder="例如：三年二班" /></div>
         <div class="field"><label for="instructions">作答說明（選填）</label><textarea id="instructions" name="instructions" maxlength="300" placeholder="例如：老師每題播放兩次。"></textarea></div>
         <button class="button full" type="submit">建立測驗代碼</button>
@@ -263,17 +263,25 @@ function renderTeacherTests() {
       <section class="card panel-card"><div class="panel-heading"><h3>我的測驗</h3><span id="test-count" class="meta"></span></div><div id="test-list" class="record-list"><div class="empty-state">正在載入測驗⋯</div></div></section>
     </div>`, "tests");
   bindShellNavigation();
+  const titleInput = document.querySelector("#test-title");
+  titleInput.addEventListener("input", () => titleInput.setCustomValidity(""));
   document.querySelector("#create-test").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const button = form.querySelector("button[type=submit]");
     const data = new FormData(form);
+    const title = String(data.get("title") || "").trim().slice(0, 80);
+    if (!title) {
+      titleInput.setCustomValidity("請輸入聽寫名稱。");
+      titleInput.reportValidity();
+      return;
+    }
     button.disabled = true;
     try {
       const code = await createUniqueTestCode();
       await setDoc(doc(db, "tests", code), {
         code,
-        title: String(data.get("title") || "").trim().slice(0, 80) || "現場聽寫",
+        title,
         className: String(data.get("className") || "").trim().slice(0, 60),
         instructions: String(data.get("instructions") || "").trim().slice(0, 300),
         status: "open",
@@ -327,6 +335,42 @@ function submissionCard(submission, showTest = false) {
     </article>`;
 }
 
+function groupedSubmissionCards(submissions) {
+  const groups = new Map();
+  submissions.forEach((submission) => {
+    const key = submission.testId || submission.testTitle || "legacy-test";
+    if (!groups.has(key)) {
+      groups.set(key, {
+        title: submission.testTitle || "未命名聽寫",
+        className: submission.className || "未指定班級",
+        latestSubmission: submission.submittedAt?.seconds || 0,
+        submissions: []
+      });
+    }
+    const group = groups.get(key);
+    group.latestSubmission = Math.max(group.latestSubmission, submission.submittedAt?.seconds || 0);
+    group.submissions.push(submission);
+  });
+
+  return [...groups.values()]
+    .sort((left, right) => right.latestSubmission - left.latestSubmission)
+    .map((group) => {
+      const total = group.submissions.length;
+      const graded = group.submissions.filter((submission) => submission.status === "graded").length;
+      return `
+        <section class="submission-group">
+          <header class="submission-group-header">
+            <div><p class="eyebrow">聽寫名稱</p><h3>${escapeHtml(group.title)}</h3><span class="meta">${escapeHtml(group.className)}</span></div>
+            <div class="submission-stats">
+              <span>交卷總數<strong>${total}</strong></span>
+              <span>已批改<strong>${graded} / ${total}</strong></span>
+            </div>
+          </header>
+          <div class="record-list">${group.submissions.map((submission) => submissionCard(submission)).join("")}</div>
+        </section>`;
+    }).join("");
+}
+
 function renderTeacherSubmissions(testId) {
   cleanupView();
   app.innerHTML = roleShell(`
@@ -355,13 +399,13 @@ function renderTeacherAllSubmissions() {
   cleanupView();
   app.innerHTML = roleShell(`
     <div class="page-heading-row"><div><p class="eyebrow">Grading center</p><h2>批改中心</h2><p>所有學生的交卷與批改狀態。</p></div></div>
-    <div id="all-submissions" class="record-list"><div class="empty-state">正在載入交卷⋯</div></div>`, "grading");
+    <div id="all-submissions" class="grading-groups"><div class="empty-state">正在載入交卷⋯</div></div>`, "grading");
   bindShellNavigation();
   const unsubscribe = onSnapshot(collection(db, "submissions"), (snapshot) => {
     const submissions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
       .sort((left, right) => (right.submittedAt?.seconds || 0) - (left.submittedAt?.seconds || 0));
     const list = document.querySelector("#all-submissions");
-    list.innerHTML = submissions.length ? submissions.map((submission) => submissionCard(submission, true)).join("") : '<div class="empty-state">目前還沒有學生交卷。</div>';
+    list.innerHTML = submissions.length ? groupedSubmissionCards(submissions) : '<div class="empty-state">目前還沒有學生交卷。</div>';
     bindGradeButtons(renderTeacherAllSubmissions);
   }, (error) => showToast(`讀取交卷失敗：${error.message}`));
   state.unsubscribers.push(unsubscribe);
