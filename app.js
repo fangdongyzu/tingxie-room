@@ -465,16 +465,19 @@ function groupedSubmissionCards(submissions) {
       const total = group.submissions.length;
       const graded = group.submissions.filter((submission) => submission.status === "graded").length;
       return `
-        <section class="submission-group">
-          <header class="submission-group-header">
+        <details class="submission-group">
+          <summary class="submission-group-header">
             <div><p class="eyebrow">聽寫名稱</p><h3>${escapeHtml(group.title)}</h3><span class="meta">${escapeHtml(group.className)}</span></div>
-            <div class="submission-stats">
-              <span>交卷總數<strong>${total}</strong></span>
-              <span>已批改<strong>${graded} / ${total}</strong></span>
+            <div class="submission-header-actions">
+              <div class="submission-stats">
+                <span>交卷總數<strong>${total}</strong></span>
+                <span>已批改<strong>${graded} / ${total}</strong></span>
+              </div>
+              <span class="collapse-label"><span class="closed-label">展開交卷</span><span class="open-label">收合交卷</span><span class="collapse-icon">⌄</span></span>
             </div>
-          </header>
+          </summary>
           <div class="record-list">${group.submissions.map((submission) => submissionCard(submission)).join("")}</div>
-        </section>`;
+        </details>`;
     }).join("");
 }
 

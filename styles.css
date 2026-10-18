@@ -151,13 +151,22 @@ input:focus, textarea:focus { border-color: #668fb5; box-shadow: 0 0 0 4px rgba(
 .test-schedule .text-button { padding: 8px 5px; font-size: .8rem; }
 .grading-groups { display: grid; gap: 26px; }
 .submission-group { overflow: hidden; border: 1px solid rgba(23,59,100,.12); border-radius: 20px; background: rgba(255,253,248,.82); box-shadow: 0 12px 35px rgba(25,49,75,.08); }
-.submission-group-header { display: flex; justify-content: space-between; gap: 22px; align-items: center; padding: 20px 22px; border-bottom: 1px solid var(--line); background: #f2f6f8; }
+.submission-group-header { display: flex; justify-content: space-between; gap: 22px; align-items: center; padding: 20px 22px; background: #f2f6f8; cursor: pointer; list-style: none; }
+.submission-group-header::-webkit-details-marker { display: none; }
+.submission-group[open] .submission-group-header { border-bottom: 1px solid var(--line); }
 .submission-group-header .eyebrow { margin-bottom: 7px; }
 .submission-group-header h3 { margin-bottom: 4px; font-size: 1.3rem; }
 .submission-group > .record-list { padding: 18px; }
+.submission-header-actions { display: flex; align-items: center; gap: 13px; }
 .submission-stats { display: flex; flex: 0 0 auto; gap: 10px; }
 .submission-stats span { display: grid; min-width: 110px; gap: 3px; padding: 10px 14px; border-radius: 12px; color: var(--muted); background: white; font-size: .75rem; }
 .submission-stats strong { color: var(--blue); font-size: 1.05rem; }
+.collapse-label { display: inline-flex; min-width: 88px; align-items: center; justify-content: flex-end; gap: 6px; color: var(--blue); font-size: .78rem; font-weight: 900; }
+.collapse-icon { font-size: 1.2rem; transition: transform .2s; }
+.open-label { display: none; }
+.submission-group[open] .closed-label { display: none; }
+.submission-group[open] .open-label { display: inline; }
+.submission-group[open] .collapse-icon { transform: rotate(180deg); }
 .test-code { margin: 16px 0; color: var(--blue); font-size: 1.55rem; font-weight: 900; letter-spacing: .18em; }
 .status { display: inline-flex; flex: 0 0 auto; padding: 5px 10px; border-radius: 999px; font-size: .73rem; font-weight: 900; }
 .status.open, .status.graded { color: #145d4d; background: #e3f5ee; }
@@ -230,6 +239,7 @@ code { padding: 2px 5px; border-radius: 5px; background: #eef2f4; }
   .grade-panel { position: static; }
   .record-top { align-items: flex-start; }
   .submission-group-header { align-items: flex-start; flex-direction: column; }
+  .submission-header-actions { width: 100%; align-items: flex-end; flex-direction: column; }
   .submission-stats { width: 100%; }
   .submission-stats span { flex: 1; min-width: 0; }
 }
