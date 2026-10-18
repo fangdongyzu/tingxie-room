@@ -13,8 +13,7 @@ const state = {
   suspiciousInsertions: 0,
   lastLength: 0,
   isComposing: false,
-  listeners: [],
-  watermarkTimer: null
+  listeners: []
 };
 
 function escapeHtml(value = "") {
@@ -58,8 +57,6 @@ function addListener(target, type, handler, options) {
 }
 
 function cleanup() {
-  clearInterval(state.watermarkTimer);
-  state.watermarkTimer = null;
   state.listeners.forEach(({ target, type, handler }) => target.removeEventListener(type, handler));
   state.listeners = [];
   document.body.classList.remove("screenshot-mode");
@@ -129,10 +126,9 @@ function renderHome() {
 function renderWatermarks() {
   const layer = document.querySelector("#watermark-layer");
   if (!layer) return;
-  const time = new Intl.DateTimeFormat("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date());
   const positions = [[4,12], [46,9], [73,27], [16,43], [55,52], [3,70], [67,76], [28,91]];
-  layer.innerHTML = positions.map(([left, top], index) => `
-    <span class="watermark" style="left:${left + Math.sin(Date.now() / 8500 + index) * 2.5}%;top:${top}%">${escapeHtml(state.name)} · ${state.deviceCode} · ${time}</span>
+  layer.innerHTML = positions.map(([left, top]) => `
+    <span class="watermark" style="left:${left}%;top:${top}%">${escapeHtml(state.name)} · ${state.deviceCode}</span>
   `).join("");
 }
 
@@ -162,7 +158,6 @@ function renderWriting() {
     </main>`;
 
   renderWatermarks();
-  state.watermarkTimer = setInterval(renderWatermarks, 1000);
   const area = document.querySelector("#writing-area");
   area.focus();
   preventPaste(area);
@@ -242,7 +237,6 @@ function renderResult(answer) {
       </div>
     </main>`;
   renderWatermarks();
-  state.watermarkTimer = setInterval(renderWatermarks, 1000);
   document.querySelector("#screenshot-ready").addEventListener("click", () => {
     document.body.classList.add("screenshot-mode");
     window.scrollTo({ top: 0, behavior: "smooth" });
