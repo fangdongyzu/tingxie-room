@@ -255,7 +255,7 @@ function renderTeacherTests() {
     <div class="dashboard-grid">
       <form id="create-test" class="card panel-card">
         <h3>建立新測驗</h3>
-        <div class="field"><label for="test-title">測驗名稱</label><input id="test-title" name="title" maxlength="80" required placeholder="例如：第六課生詞聽寫" /></div>
+        <div class="field"><label for="test-title">聽寫名稱（選填）</label><input id="test-title" name="title" maxlength="80" placeholder="例如：第六課生詞聽寫" /></div>
         <div class="field"><label for="class-name">班級（選填）</label><input id="class-name" name="className" maxlength="60" placeholder="例如：三年二班" /></div>
         <div class="field"><label for="instructions">作答說明（選填）</label><textarea id="instructions" name="instructions" maxlength="300" placeholder="例如：老師每題播放兩次。"></textarea></div>
         <button class="button full" type="submit">建立測驗代碼</button>
@@ -273,7 +273,7 @@ function renderTeacherTests() {
       const code = await createUniqueTestCode();
       await setDoc(doc(db, "tests", code), {
         code,
-        title: String(data.get("title") || "").trim().slice(0, 80),
+        title: String(data.get("title") || "").trim().slice(0, 80) || "現場聽寫",
         className: String(data.get("className") || "").trim().slice(0, 60),
         instructions: String(data.get("instructions") || "").trim().slice(0, 300),
         status: "open",
