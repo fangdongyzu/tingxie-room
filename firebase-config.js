@@ -8,4 +8,7 @@ export const firebaseConfig = {
   measurementId: "G-2VXYB3VHS2"
 };
 
-export const teacherEmails = ["tristanlpd@gm.lhu.edu.tw"];
+export const teacherEmails = [
+  "tristanlpd@gm.lhu.edu.tw",
+  "tristanlpd@gmail.com"
+];

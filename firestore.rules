@@ -14,7 +14,10 @@ service cloud.firestore {
       allow read: if signedIn() && request.auth.token.email == adminEmail;
       allow create: if signedIn()
         && request.auth.token.email == adminEmail
-        && adminEmail == 'tristanlpd@gm.lhu.edu.tw'
+        && adminEmail in [
+          'tristanlpd@gm.lhu.edu.tw',
+          'tristanlpd@gmail.com'
+        ]
         && request.resource.data.keys().hasOnly(['name', 'email', 'createdAt']);
       allow update, delete: if false;
     }
