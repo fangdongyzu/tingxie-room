@@ -25,7 +25,7 @@ import {
   writeBatch
 } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
 import { firebaseConfig, teacherEmails } from "./firebase-config.js";
-import { languageOptions, translate } from "./i18n.js?v=20261019-5";
+import { languageOptions, translate } from "./i18n.js?v=20261019-9";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -480,13 +480,16 @@ function renderTeacherTests() {
 
 function submissionCard(submission, showTest = false) {
   const graded = submission.status === "graded";
+  const resubmitAllowed = submission.resubmitAllowed === true;
+  const resubmissionCount = Number(submission.resubmissionCount || 0);
+  const focusLeaves = Number(submission.metrics?.focusLeaves || 0);
   return `
     <article class="record-card submission-card">
       <div class="record-top"><div><h3>${escapeHtml(submission.studentName)}</h3><span class="meta">${escapeHtml(submission.studentEmail)} · ${formatTime(submission.submittedAt)}</span></div><span class="status ${graded ? "graded" : "submitted"}">${graded ? tr("已批改") : tr("待批改")}</span></div>
       ${showTest ? `<p class="record-context">${escapeHtml(submission.testTitle)} · ${escapeHtml(submission.className || tr("未指定班級"))}</p>` : ""}
       <p class="answer-preview">${escapeHtml(submission.answer)}</p>
-      <div class="integrity-line"><span>${tr("裝置 {code}", { code: escapeHtml(submission.deviceCode) })}</span><span>${tr("離開 {count} 次", { count: submission.metrics?.focusLeaves || 0 })}</span><span>${tr("貼上 {count} 次", { count: submission.metrics?.pasteAttempts || 0 })}</span>${graded ? `<strong>${tr("成績：{grade}", { grade: escapeHtml(submission.grade) })}</strong>` : ""}</div>
-      <div class="row-actions"><button class="button small" data-grade-id="${submission.id}">${graded ? tr("查看／修改批改") : tr("開始批改")}</button></div>
+      <div class="integrity-line"><span>${tr("裝置 {code}", { code: escapeHtml(submission.deviceCode) })}</span><strong class="focus-flag ${focusLeaves ? "warn" : "good"}">${focusLeaves ? tr("離開畫面 {count} 次", { count: focusLeaves }) : tr("未離開作答畫面")}</strong><span>${tr("貼上 {count} 次", { count: submission.metrics?.pasteAttempts || 0 })}</span>${resubmissionCount ? `<span>${tr("已重交 {count} 次", { count: resubmissionCount })}</span>` : ""}${resubmitAllowed ? `<strong class="resubmit-note">${tr("已允許重交")}</strong>` : ""}${graded ? `<strong>${tr("成績：{grade}", { grade: escapeHtml(submission.grade) })}</strong>` : ""}</div>
+      <div class="row-actions"><button class="button small" data-grade-id="${submission.id}">${graded ? tr("查看／修改批改") : tr("開始批改")}</button><button class="button ${resubmitAllowed ? "danger" : "secondary"} small" data-resubmit-id="${submission.id}" data-resubmit-allowed="${resubmitAllowed}" data-resubmission-count="${resubmissionCount}" data-student-name="${escapeHtml(submission.studentName)}">${resubmitAllowed ? tr("取消重交") : tr("允許重交")}</button></div>
     </article>`;
 }
 
@@ -573,6 +576,32 @@ function renderTeacherAllSubmissions() {
 
 function bindGradeButtons(returnView) {
   document.querySelectorAll("[data-grade-id]").forEach((button) => button.addEventListener("click", () => renderGradeEditor(button.dataset.gradeId, returnView)));
+  document.querySelectorAll("[data-resubmit-id]").forEach((button) => button.addEventListener("click", async () => {
+    const currentlyAllowed = button.dataset.resubmitAllowed === "true";
+    const studentName = button.dataset.studentName;
+    const message = currentlyAllowed
+      ? tr("確定取消 {name} 的重交權限嗎？", { name: studentName })
+      : tr("確定允許 {name} 重新提交這份聽寫嗎？\n\n學生下一次提交後，重交權限會自動關閉。", { name: studentName });
+    if (!confirm(message)) return;
+    button.disabled = true;
+    try {
+      const changes = currentlyAllowed
+        ? { resubmitAllowed: false }
+        : {
+            resubmitAllowed: true,
+            resubmitAllowedAt: serverTimestamp(),
+            resubmitAllowedBy: state.user.uid,
+            resubmissionCount: Number(button.dataset.resubmissionCount || 0)
+          };
+      await updateDoc(doc(db, "submissions", button.dataset.resubmitId), changes);
+      showToast(currentlyAllowed
+        ? tr("已取消 {name} 的重交權限。", { name: studentName })
+        : tr("已允許 {name} 重交。", { name: studentName }));
+    } catch (error) {
+      showToast(tr("設定重交失敗：{message}", { message: error.message }));
+      button.disabled = false;
+    }
+  }));
 }
 
 async function renderGradeEditor(submissionId, returnView) {
@@ -583,6 +612,7 @@ async function renderGradeEditor(submissionId, returnView) {
     const snapshot = await getDoc(doc(db, "submissions", submissionId));
     if (!snapshot.exists()) throw new Error(tr("找不到這份交卷。"));
     const submission = { id: snapshot.id, ...snapshot.data() };
+    const focusLeaves = Number(submission.metrics?.focusLeaves || 0);
     app.innerHTML = roleShell(`
       <button id="back-submissions" class="text-button">${tr("← 返回交卷列表")}</button>
       <div class="grade-layout">
@@ -590,7 +620,7 @@ async function renderGradeEditor(submissionId, returnView) {
           <p class="eyebrow">Student answer</p><h2>${escapeHtml(submission.testTitle)}</h2>
           <div class="student-summary"><strong>${escapeHtml(submission.studentName)}</strong><span>${escapeHtml(submission.studentEmail)}</span><span>${tr("裝置 {code}", { code: escapeHtml(submission.deviceCode) })}</span><span>${formatTime(submission.submittedAt)}</span></div>
           <div class="answer-label">${tr("學生答案")}</div><p class="final-answer">${escapeHtml(submission.answer)}</p>
-          <div class="integrity-line"><span>${tr("作答 {count} 分鐘", { count: Math.max(1, Math.round((submission.metrics?.durationSeconds || 0) / 60)) })}</span><span>${tr("離開畫面 {count} 次", { count: submission.metrics?.focusLeaves || 0 })}</span><span>${tr("貼上嘗試 {count} 次", { count: submission.metrics?.pasteAttempts || 0 })}</span><span>${tr("異常插入 {count} 次", { count: submission.metrics?.suspiciousInsertions || 0 })}</span></div>
+          <div class="integrity-line"><span>${tr("作答 {count} 分鐘", { count: Math.max(1, Math.round((submission.metrics?.durationSeconds || 0) / 60)) })}</span><strong class="focus-flag ${focusLeaves ? "warn" : "good"}">${focusLeaves ? tr("離開畫面 {count} 次", { count: focusLeaves }) : tr("未離開作答畫面")}</strong><span>${tr("貼上嘗試 {count} 次", { count: submission.metrics?.pasteAttempts || 0 })}</span><span>${tr("異常插入 {count} 次", { count: submission.metrics?.suspiciousInsertions || 0 })}</span></div>
         </section>
         <form id="grade-form" class="card panel-card grade-panel">
           <p class="eyebrow">Teacher review</p><h3>${tr("成績與訂正")}</h3>
@@ -655,10 +685,15 @@ function renderStudentHome() {
       const testSnapshot = await getDoc(doc(db, "tests", code));
       if (!testSnapshot.exists()) throw new Error(tr("找不到這個測驗代碼。"));
       const test = { id: testSnapshot.id, ...testSnapshot.data() };
-      if (!isTestOpen(test)) throw new Error(tr("老師已關閉這個測驗。"));
+      const submissionSnapshot = await getDoc(doc(db, "submissions", `${test.id}_${state.user.uid}`));
+      const existingSubmission = submissionSnapshot.exists() ? submissionSnapshot.data() : null;
+      const canResubmit = existingSubmission?.resubmitAllowed === true;
+      if (existingSubmission && !canResubmit) throw new Error(tr("你已經提交過這份測驗。請等待老師允許重交。"));
+      if (!isTestOpen(test) && !canResubmit) throw new Error(tr("老師已關閉這個測驗。"));
       state.activeTest = test;
       state.studentName = String(data.get("studentName") || "").trim().slice(0, 40);
       renderWriting();
+      if (canResubmit) showToast(tr("老師已允許你重新提交這份測驗。"));
     } catch (error) {
       showToast(error.message);
       button.disabled = false;
@@ -691,13 +726,35 @@ function renderWatermarks() {
 
 function protectWriting(area) {
   const shield = document.querySelector("#privacy-shield");
-  const conceal = () => {
+  let isAway = false;
+  let blurTimer = null;
+  const markAway = () => {
+    if (isAway) return;
+    isAway = true;
     shield.classList.remove("hidden");
     state.focusLeaves += 1;
   };
-  addListener(document, "visibilitychange", () => document.hidden ? conceal() : shield.classList.add("hidden"));
-  addListener(window, "blur", conceal);
-  addListener(window, "focus", () => shield.classList.add("hidden"));
+  const markReturned = () => {
+    if (blurTimer) clearTimeout(blurTimer);
+    blurTimer = null;
+    const wasAway = isAway;
+    isAway = false;
+    shield.classList.add("hidden");
+    if (wasAway) showToast(tr("已記錄離開畫面 {count} 次。", { count: state.focusLeaves }));
+  };
+  addListener(document, "visibilitychange", () => document.hidden ? markAway() : markReturned());
+  addListener(window, "pagehide", markAway);
+  addListener(window, "pageshow", markReturned);
+  addListener(document, "freeze", markAway);
+  addListener(document, "resume", markReturned);
+  addListener(window, "blur", () => {
+    if (blurTimer) clearTimeout(blurTimer);
+    blurTimer = setTimeout(() => {
+      if (!document.hasFocus()) markAway();
+    }, 300);
+    state.timers.push(blurTimer);
+  });
+  addListener(window, "focus", markReturned);
   addListener(document, "copy", (event) => event.preventDefault());
   addListener(document, "cut", (event) => event.preventDefault());
   addListener(document, "contextmenu", (event) => event.preventDefault());
@@ -768,15 +825,10 @@ function renderWriting({ draft = "", preserveSession = false } = {}) {
     button.disabled = true;
     try {
       const submissionId = `${test.id}_${state.user.uid}`;
-      await setDoc(doc(db, "submissions", submissionId), {
-        testId: test.id,
-        testCode: test.code,
-        testTitle: test.title,
-        className: test.className || "",
-        userId: state.user.uid,
+      const submissionReference = doc(db, "submissions", submissionId);
+      const existingSnapshot = await getDoc(submissionReference);
+      const answerData = {
         studentName: state.studentName,
-        studentEmail: state.user.email || "",
-        studentPhotoURL: state.user.photoURL || "",
         answer,
         deviceCode: getDeviceCode(),
         startedAt: new Date(state.startedAt),
@@ -794,11 +846,37 @@ function renderWriting({ draft = "", preserveSession = false } = {}) {
           focusLeaves: state.focusLeaves,
           suspiciousInsertions: state.suspiciousInsertions
         }
-      });
+      };
+      if (existingSnapshot.exists()) {
+        const existingSubmission = existingSnapshot.data();
+        if (existingSubmission.resubmitAllowed !== true) throw new Error(tr("這份測驗目前不允許重交。"));
+        await updateDoc(submissionReference, {
+          ...answerData,
+          resubmitAllowed: false,
+          resubmissionCount: Number(existingSubmission.resubmissionCount || 0) + 1,
+          resubmittedAt: serverTimestamp()
+        });
+      } else {
+        await setDoc(submissionReference, {
+        testId: test.id,
+        testCode: test.code,
+        testTitle: test.title,
+        className: test.className || "",
+        userId: state.user.uid,
+        studentEmail: state.user.email || "",
+        studentPhotoURL: state.user.photoURL || "",
+          ...answerData,
+          resubmitAllowed: false,
+          resubmitAllowedAt: null,
+          resubmitAllowedBy: null,
+          resubmissionCount: 0,
+          resubmittedAt: null
+        });
+      }
       renderSubmissionReceipt();
     } catch (error) {
       const message = error.code === "permission-denied"
-        ? tr("無法重複交卷；請到「我的成績」查看。")
+        ? tr("無法交卷；這份測驗目前不允許重交。")
         : tr("交卷失敗：{message}", { message: error.message });
       showToast(message);
       button.disabled = false;
@@ -829,18 +907,46 @@ function renderStudentResults() {
     const container = document.querySelector("#student-results");
     container.innerHTML = results.length ? results.map((result) => {
       const graded = result.status === "graded";
+      const resubmitAllowed = result.resubmitAllowed === true;
+      const focusLeaves = Number(result.metrics?.focusLeaves || 0);
       return `
         <article class="card result-record">
-          <div class="record-top"><div><p class="eyebrow">${escapeHtml(result.className || tr("現場聽寫"))}</p><h3>${escapeHtml(result.testTitle)}</h3><span class="meta">${tr("交卷：{time}", { time: formatTime(result.submittedAt) })}</span></div><span class="status ${graded ? "graded" : "submitted"}">${graded ? tr("已批改") : tr("等待批改")}</span></div>
+          <div class="record-top"><div><p class="eyebrow">${escapeHtml(result.className || tr("現場聽寫"))}</p><h3>${escapeHtml(result.testTitle)}</h3><span class="meta">${tr("交卷：{time}", { time: formatTime(result.submittedAt) })}</span></div><span class="status ${resubmitAllowed ? "resubmit" : graded ? "graded" : "submitted"}">${resubmitAllowed ? tr("可重新交卷") : graded ? tr("已批改") : tr("等待批改")}</span></div>
           ${graded ? `<div class="grade-display"><span>${tr("成績")}</span><strong>${escapeHtml(result.grade)}</strong></div>` : ""}
           <div class="answer-label">${tr("我的答案")}</div><p class="result-answer">${escapeHtml(result.answer)}</p>
+          <div class="integrity-line result-integrity"><strong class="focus-flag ${focusLeaves ? "warn" : "good"}">${focusLeaves ? tr("離開畫面 {count} 次", { count: focusLeaves }) : tr("未離開作答畫面")}</strong><span>${tr("貼上嘗試 {count} 次", { count: result.metrics?.pasteAttempts || 0 })}</span></div>
           ${graded && result.correction ? `<div class="answer-label">${tr("正確答案／訂正")}</div><p class="correction-box">${escapeHtml(result.correction)}</p>` : ""}
           ${graded && result.feedback ? `<div class="answer-label">${tr("老師評語")}</div><p class="feedback-box">${escapeHtml(result.feedback)}</p>` : ""}
           ${graded ? `<p class="meta">${tr("批改時間：{time}", { time: formatTime(result.gradedAt) })}</p>` : ""}
+          ${resubmitAllowed ? `<div class="row-actions"><button class="button" data-start-resubmission="${result.id}" data-test-id="${result.testId}">${tr("重新作答")}</button></div>` : ""}
         </article>`;
     }).join("") : `<div class="empty-state">${tr("你還沒有交卷紀錄。")}</div>`;
+    container.querySelectorAll("[data-start-resubmission]").forEach((button) => button.addEventListener("click", () => openResubmission(button.dataset.startResubmission, button.dataset.testId)));
   }, (error) => showToast(tr("讀取成績失敗：{message}", { message: error.message })));
   state.unsubscribers.push(unsubscribe);
+}
+
+async function openResubmission(submissionId, testId) {
+  cleanupView();
+  renderLoading(tr("正在開啟重交測驗⋯"));
+  try {
+    const [submissionSnapshot, testSnapshot] = await Promise.all([
+      getDoc(doc(db, "submissions", submissionId)),
+      getDoc(doc(db, "tests", testId))
+    ]);
+    if (!submissionSnapshot.exists() || submissionSnapshot.data().resubmitAllowed !== true) {
+      throw new Error(tr("這份測驗目前不允許重交。"));
+    }
+    if (!testSnapshot.exists()) throw new Error(tr("找不到這個測驗代碼。"));
+    const submission = submissionSnapshot.data();
+    state.activeTest = { id: testSnapshot.id, ...testSnapshot.data() };
+    state.studentName = submission.studentName || state.user.displayName || "";
+    renderWriting();
+    showToast(tr("老師已允許你重新提交這份測驗。"));
+  } catch (error) {
+    renderStudentResults();
+    showToast(error.message);
+  }
 }
 
 renderLoading();

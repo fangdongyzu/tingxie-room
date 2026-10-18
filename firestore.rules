@@ -58,14 +58,50 @@ service cloud.firestore {
         && request.resource.data.grade == null
         && request.resource.data.gradedAt == null
         && request.resource.data.gradedBy == null
+        && request.resource.data.resubmitAllowed == false
+        && request.resource.data.resubmitAllowedAt == null
+        && request.resource.data.resubmitAllowedBy == null
+        && request.resource.data.resubmissionCount == 0
+        && request.resource.data.resubmittedAt == null
         && request.resource.data.keys().hasOnly([
           'testId', 'testCode', 'testTitle', 'className', 'userId',
           'studentName', 'studentEmail', 'studentPhotoURL', 'answer',
           'deviceCode', 'startedAt', 'submittedAt', 'status', 'grade',
-          'correction', 'feedback', 'gradedAt', 'gradedBy', 'metrics'
+          'correction', 'feedback', 'gradedAt', 'gradedBy', 'metrics',
+          'resubmitAllowed', 'resubmitAllowedAt', 'resubmitAllowedBy',
+          'resubmissionCount', 'resubmittedAt'
         ]);
       allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        signedIn()
+        && resource.data.userId == request.auth.uid
+        && resource.data.resubmitAllowed == true
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.testId == resource.data.testId
+        && request.resource.data.testCode == resource.data.testCode
+        && request.resource.data.testTitle == resource.data.testTitle
+        && request.resource.data.className == resource.data.className
+        && request.resource.data.studentEmail == resource.data.studentEmail
+        && request.resource.data.studentPhotoURL == resource.data.studentPhotoURL
+        && request.resource.data.status == 'submitted'
+        && request.resource.data.grade == null
+        && request.resource.data.correction == ''
+        && request.resource.data.feedback == ''
+        && request.resource.data.gradedAt == null
+        && request.resource.data.gradedBy == null
+        && request.resource.data.resubmitAllowed == false
+        && request.resource.data.resubmitAllowedAt == resource.data.resubmitAllowedAt
+        && request.resource.data.resubmitAllowedBy == resource.data.resubmitAllowedBy
+        && request.resource.data.resubmissionCount == resource.data.resubmissionCount + 1
+        && request.resource.data.resubmittedAt == request.time
+        && request.resource.data.submittedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'studentName', 'answer', 'deviceCode', 'startedAt', 'submittedAt',
+          'status', 'grade', 'correction', 'feedback', 'gradedAt', 'gradedBy',
+          'metrics', 'resubmitAllowed', 'resubmissionCount', 'resubmittedAt'
+        ])
+      );
+      allow delete: if isAdmin();
     }
   }
 }

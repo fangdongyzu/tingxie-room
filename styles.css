@@ -115,6 +115,10 @@ input:focus, textarea:focus { border-color: #668fb5; box-shadow: 0 0 0 4px rgba(
 .integrity-line { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 18px; color: var(--muted); font-size: .78rem; }
 .integrity-line .good { color: var(--green); font-weight: 900; }
 .integrity-line .warn { color: var(--red); font-weight: 900; }
+.focus-flag { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 999px; }
+.integrity-line .focus-flag.good { background: #e8f5ef; }
+.integrity-line .focus-flag.warn { background: #fff0ed; }
+.result-integrity { margin: -8px 0 20px; }
 .result-actions { display: flex; justify-content: center; gap: 10px; margin: 20px 0 35px; }
 .screenshot-mode .result-actions, .screenshot-mode .result-instruction p { display: none; }
 
@@ -181,6 +185,8 @@ input:focus, textarea:focus { border-color: #668fb5; box-shadow: 0 0 0 4px rgba(
 .status { display: inline-flex; flex: 0 0 auto; padding: 5px 10px; border-radius: 999px; font-size: .73rem; font-weight: 900; }
 .status.open, .status.graded { color: #145d4d; background: #e3f5ee; }
 .status.closed, .status.submitted { color: #7b4a16; background: #fff1d8; }
+.status.resubmit { color: #174f83; background: #e5f1fc; }
+.resubmit-note { color: #174f83; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .empty-state { padding: 38px 20px; border: 1px dashed #c3ced7; border-radius: 14px; color: var(--muted); text-align: center; }
 .answer-preview { display: -webkit-box; margin: 13px 0; overflow: hidden; color: #314a60; line-height: 1.7; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
