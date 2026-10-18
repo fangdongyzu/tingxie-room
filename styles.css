@@ -72,6 +72,7 @@ input:focus, textarea:focus { border-color: #668fb5; box-shadow: 0 0 0 4px rgba(
 
 .write-shell { min-height: 100vh; padding: 20px; background: #f6f2e9; }
 .write-frame { position: relative; z-index: 2; width: min(920px, 100%); margin: 0 auto; }
+.write-back { margin-top: 4px; padding: 8px 0; }
 .write-head { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin: 15px 0 24px; }
 .write-head h2 { margin-bottom: 6px; }
 .meta { color: var(--muted); font-size: .82rem; line-height: 1.5; }

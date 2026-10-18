@@ -586,7 +586,7 @@ function renderStudentHome() {
       <form id="join-test" class="card start-card">
         <h2>加入測驗</h2>
         <div class="field"><label for="test-code">六位測驗代碼</label><input id="test-code" class="code-input" name="code" maxlength="6" autocomplete="off" autocapitalize="characters" required placeholder="ABC123" /></div>
-        <div class="field"><label for="student-name">交卷姓名</label><input id="student-name" name="studentName" maxlength="40" required value="${escapeHtml(state.user.displayName || "")}" /></div>
+        <div class="field"><label for="student-name">交卷姓名</label><input id="student-name" name="studentName" maxlength="40" required value="${escapeHtml(state.studentName || state.user.displayName || "")}" /></div>
         <button class="button full" type="submit">尋找測驗</button>
         <div class="account-note"><span>Google 帳號</span><strong>${escapeHtml(state.user.email)}</strong></div>
       </form>
@@ -682,6 +682,7 @@ function renderWriting() {
     <main class="write-shell">
       <div id="watermark-layer" class="watermark-layer" aria-hidden="true"></div>
       <div class="write-frame">
+        <button id="leave-writing" class="text-button write-back" type="button">← 返回</button>
         <header class="write-head"><div><p class="eyebrow">${escapeHtml(test.className || "現場聽寫")}</p><h2>${escapeHtml(test.title)}</h2><p class="meta">${escapeHtml(test.instructions || "聽老師播放或朗讀後，依序輸入內容。")}</p></div><div class="student-chip"><strong>${escapeHtml(state.studentName)}</strong> · 裝置 ${getDeviceCode()}</div></header>
         <form id="writing-form" class="card writing-card">
           <textarea id="writing-area" class="writing-area" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="聽寫作答區" placeholder="在這裡開始輸入⋯" required></textarea>
@@ -695,6 +696,11 @@ function renderWriting() {
   area.focus();
   preventPaste(area);
   protectWriting(area);
+  document.querySelector("#leave-writing").addEventListener("click", () => {
+    if (area.value.trim() && !confirm("返回後，目前輸入的內容不會保留。確定要返回嗎？")) return;
+    state.activeTest = null;
+    renderStudentHome();
+  });
   document.querySelector("#writing-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const answer = area.value.trim();
