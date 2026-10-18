@@ -6,6 +6,7 @@ import {
   onAuthStateChanged,
   setPersistence,
   signInWithPopup,
+  signInWithRedirect,
   signOut
 } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js";
 import {
@@ -20,7 +21,7 @@ import {
   updateDoc,
   where
 } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
-import { firebaseConfig } from "./firebase-config.js";
+import { firebaseConfig, teacherEmails } from "./firebase-config.js";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -162,9 +163,22 @@ function renderLogin() {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
+      if ([
+        "auth/network-request-failed",
+        "auth/popup-blocked",
+        "auth/operation-not-supported-in-this-environment"
+      ].includes(error.code)) {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectError) {
+          showToast(`登入失敗：${redirectError.message}`);
+          button.disabled = false;
+          return;
+        }
+      }
       const messages = {
         "auth/unauthorized-domain": "請先把 fangdongyzu.github.io 加入 Firebase Authentication 的 Authorized domains。",
-        "auth/popup-blocked": "瀏覽器阻擋了登入視窗，請允許彈出式視窗後再試。",
         "auth/popup-closed-by-user": "登入視窗已關閉，請重新登入。"
       };
       showToast(messages[error.code] || `登入失敗：${error.message}`);
@@ -188,8 +202,17 @@ async function syncUserProfile(user) {
 
 async function loadAccount(user) {
   state.user = user;
-  const adminSnapshot = await getDoc(doc(db, "admins", user.uid));
+  const adminRef = doc(db, "admins", user.email);
+  const adminSnapshot = await getDoc(adminRef);
   state.isAdmin = adminSnapshot.exists();
+  if (!state.isAdmin && teacherEmails.includes(user.email)) {
+    await setDoc(adminRef, {
+      name: user.displayName || user.email,
+      email: user.email,
+      createdAt: serverTimestamp()
+    });
+    state.isAdmin = true;
+  }
   await syncUserProfile(user);
   if (state.isAdmin) renderTeacherTests();
   else renderStudentHome();
@@ -197,18 +220,17 @@ async function loadAccount(user) {
 
 function renderFirebaseError(error) {
   cleanupView();
-  const uid = state.user?.uid || "尚未取得";
+  const email = state.user?.email || "尚未取得";
   app.innerHTML = `
     <main class="shell"><div class="frame"><section class="card setup-card">
       <p class="eyebrow">Firebase setup needed</p>
       <h2>Firebase 尚未完成設定</h2>
       <p class="lead">請確認已啟用 Google 登入、建立 Firestore Database，並部署專案內的 <code>firestore.rules</code>。</p>
       <div class="notice error-notice"><strong>${escapeHtml(error.code || "firebase/error")}</strong><br />${escapeHtml(error.message)}</div>
-      <div class="uid-box"><span>目前帳號 UID</span><code>${escapeHtml(uid)}</code><button id="copy-uid" class="button secondary small">複製 UID</button></div>
+      <div class="uid-box"><span>目前 Google 帳號</span><code>${escapeHtml(email)}</code></div>
       <button id="retry-account" class="button">重新檢查</button>
       <button id="setup-sign-out" class="button secondary">登出</button>
     </section></div></main>`;
-  document.querySelector("#copy-uid").addEventListener("click", () => navigator.clipboard.writeText(uid).then(() => showToast("UID 已複製。")));
   document.querySelector("#retry-account").addEventListener("click", () => loadAccount(state.user).catch(renderFirebaseError));
   document.querySelector("#setup-sign-out").addEventListener("click", () => signOut(auth));
 }
@@ -412,14 +434,10 @@ function renderStudentHome() {
         <div class="field"><label for="test-code">六位測驗代碼</label><input id="test-code" class="code-input" name="code" maxlength="6" autocomplete="off" autocapitalize="characters" required placeholder="ABC123" /></div>
         <div class="field"><label for="student-name">交卷姓名</label><input id="student-name" name="studentName" maxlength="40" required value="${escapeHtml(state.user.displayName || "")}" /></div>
         <button class="button full" type="submit">尋找測驗</button>
-        <div class="account-note"><span>Google 帳號</span><strong>${escapeHtml(state.user.email)}</strong><button id="copy-student-uid" type="button" class="text-button">複製帳號 UID</button></div>
+        <div class="account-note"><span>Google 帳號</span><strong>${escapeHtml(state.user.email)}</strong></div>
       </form>
     </div>`, "take");
   bindShellNavigation();
-  document.querySelector("#copy-student-uid").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(state.user.uid);
-    showToast("帳號 UID 已複製。老師第一次設定權限時會用到它。");
-  });
   document.querySelector("#join-test").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;

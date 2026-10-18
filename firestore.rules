@@ -7,12 +7,16 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
     }
 
-    match /admins/{userId} {
-      allow read: if signedIn() && request.auth.uid == userId;
-      allow write: if false;
+    match /admins/{adminEmail} {
+      allow read: if signedIn() && request.auth.token.email == adminEmail;
+      allow create: if signedIn()
+        && request.auth.token.email == adminEmail
+        && adminEmail == 'tristanlpd@gm.lhu.edu.tw'
+        && request.resource.data.keys().hasOnly(['name', 'email', 'createdAt']);
+      allow update, delete: if false;
     }
 
     match /users/{userId} {

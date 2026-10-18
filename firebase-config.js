@@ -7,3 +7,5 @@ export const firebaseConfig = {
   appId: "1:429519327085:web:7f7cf3e7950f32bd7d5464",
   measurementId: "G-2VXYB3VHS2"
 };
+
+export const teacherEmails = ["tristanlpd@gm.lhu.edu.tw"];

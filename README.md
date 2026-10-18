@@ -39,13 +39,9 @@ firebase deploy --only firestore:rules
 
 ### 3. 設定第一位老師
 
-1. 使用老師的 Google 帳號登入網站。
-2. 在學生首頁按「複製帳號 UID」。
-3. 到 Firebase Console 的 **Firestore Database → Data**。
-4. 建立 collection：`admins`。
-5. 建立 document，Document ID 使用剛才複製的 UID。
-6. 可加入欄位 `name`（string），內容填老師姓名。
-7. 重新整理網站，帳號會進入老師控制台。
+1. 在 `firebase-config.js` 的 `teacherEmails` 加入老師的完整 Google 電子郵件地址。
+2. 在 `firestore.rules` 的 `admins` 建立條件加入相同地址並重新發布規則。
+3. 使用該 Google 帳號首次登入時，系統會安全建立老師權限並進入老師控制台。
 
 `admins` 文件不能由網站自行建立，因此學生無法把自己改成老師。
 
