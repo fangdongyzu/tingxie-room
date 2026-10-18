@@ -84,7 +84,11 @@ input:focus, textarea:focus { border-color: #668fb5; box-shadow: 0 0 0 4px rgba(
 .write-head { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin: 15px 0 24px; }
 .write-head h2 { margin-bottom: 6px; }
 .meta { color: var(--muted); font-size: .82rem; line-height: 1.5; }
-.student-chip { flex: 0 0 auto; padding: 10px 13px; border: 1px solid var(--line); border-radius: 12px; background: white; font-size: .84rem; }
+.student-chip { display: grid; flex: 0 0 auto; gap: 3px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 12px; background: white; font-size: .84rem; }
+.student-chip span { color: var(--muted); font-size: .72rem; }
+.student-chip .focus-counter { width: fit-content; margin-top: 3px; padding: 3px 7px; border-radius: 999px; font-weight: 900; }
+.student-chip .focus-counter.good { color: var(--green); background: #e8f5ef; }
+.student-chip .focus-counter.warn { color: var(--red); background: #fff0ed; }
 .writing-card { padding: clamp(21px, 5vw, 43px); }
 .writing-area { min-height: 52vh; border: 0; border-radius: 0; padding: 3px 0; background: repeating-linear-gradient(white 0, white 42px, #dde5e9 43px); box-shadow: none; font-family: "BiauKai", "DFKai-SB", "標楷體", "KaiTi", "STKaiti", serif; font-size: clamp(1.12rem, 2.5vw, 1.4rem); line-height: 43px; }
 .writing-area:focus { box-shadow: none; }

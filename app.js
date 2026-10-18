@@ -55,7 +55,8 @@ const state = {
   focusLeaves: 0,
   suspiciousInsertions: 0,
   lastLength: 0,
-  isComposing: false
+  isComposing: false,
+  animationFrameId: null
 };
 
 function tr(source, values = {}) {
@@ -103,6 +104,18 @@ function showToast(message) {
   toast.classList.add("show");
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => toast.classList.remove("show"), 3000);
+}
+
+function confirmAction(message) {
+  const confirmed = window.confirm(message);
+  window.dispatchEvent(new Event("tingxie-dialog-closed"));
+  return confirmed;
+}
+
+function focusTransitionForFrame(frameGap, isAway, isHidden, threshold) {
+  if (isHidden) return "none";
+  if (frameGap > threshold) return isAway ? "none" : "leave";
+  return isAway ? "return" : "none";
 }
 
 function formatTime(value) {
@@ -163,6 +176,8 @@ function cleanupView() {
   state.listeners = [];
   state.timers.forEach((timer) => clearTimeout(timer));
   state.timers = [];
+  if (state.animationFrameId) cancelAnimationFrame(state.animationFrameId);
+  state.animationFrameId = null;
   document.body.classList.remove("exam-mode");
 }
 
@@ -463,7 +478,7 @@ function renderTeacherTests() {
       }
     }));
     list.querySelectorAll("[data-delete-test]").forEach((button) => button.addEventListener("click", async () => {
-      const confirmed = window.confirm(tr("確定要刪除「{title}」嗎？\n\n所有學生交卷、成績和訂正也會永久刪除，無法復原。", { title: button.dataset.deleteTitle }));
+      const confirmed = confirmAction(tr("確定要刪除「{title}」嗎？\n\n所有學生交卷、成績和訂正也會永久刪除，無法復原。", { title: button.dataset.deleteTitle }));
       if (!confirmed) return;
       button.disabled = true;
       try {
@@ -582,7 +597,7 @@ function bindGradeButtons(returnView) {
     const message = currentlyAllowed
       ? tr("確定取消 {name} 的重交權限嗎？", { name: studentName })
       : tr("確定允許 {name} 重新提交這份聽寫嗎？\n\n學生下一次提交後，重交權限會自動關閉。", { name: studentName });
-    if (!confirm(message)) return;
+    if (!confirmAction(message)) return;
     button.disabled = true;
     try {
       const changes = currentlyAllowed
@@ -726,27 +741,41 @@ function renderWatermarks() {
 
 function protectWriting(area) {
   const shield = document.querySelector("#privacy-shield");
+  const focusCounter = document.querySelector("#focus-leave-counter");
+  const suspendedFrameThreshold = 1000;
   let isAway = false;
   let blurTimer = null;
+  let lastFrameAt = Date.now();
+  const updateFocusCounter = () => {
+    if (!focusCounter) return;
+    focusCounter.textContent = tr("離開畫面 {count} 次", { count: state.focusLeaves });
+    focusCounter.classList.toggle("warn", state.focusLeaves > 0);
+    focusCounter.classList.toggle("good", state.focusLeaves === 0);
+  };
   const markAway = () => {
     if (isAway) return;
     isAway = true;
     shield.classList.remove("hidden");
     state.focusLeaves += 1;
+    updateFocusCounter();
   };
-  const markReturned = () => {
+  const markReturned = (detectSuspendedFrame = true) => {
     if (blurTimer) clearTimeout(blurTimer);
     blurTimer = null;
+    const now = Date.now();
+    const frameGap = now - lastFrameAt;
+    if (detectSuspendedFrame && focusTransitionForFrame(frameGap, isAway, document.hidden, suspendedFrameThreshold) === "leave") markAway();
     const wasAway = isAway;
     isAway = false;
+    lastFrameAt = now;
     shield.classList.add("hidden");
     if (wasAway) showToast(tr("已記錄離開畫面 {count} 次。", { count: state.focusLeaves }));
   };
-  addListener(document, "visibilitychange", () => document.hidden ? markAway() : markReturned());
+  addListener(document, "visibilitychange", () => document.hidden ? markAway() : markReturned(true));
   addListener(window, "pagehide", markAway);
-  addListener(window, "pageshow", markReturned);
+  addListener(window, "pageshow", () => markReturned(true));
   addListener(document, "freeze", markAway);
-  addListener(document, "resume", markReturned);
+  addListener(document, "resume", () => markReturned(true));
   addListener(window, "blur", () => {
     if (blurTimer) clearTimeout(blurTimer);
     blurTimer = setTimeout(() => {
@@ -754,7 +783,18 @@ function protectWriting(area) {
     }, 300);
     state.timers.push(blurTimer);
   });
-  addListener(window, "focus", markReturned);
+  addListener(window, "focus", () => markReturned(true));
+  addListener(window, "tingxie-dialog-closed", () => markReturned(false));
+  const detectSuspendedFrame = () => {
+    const now = Date.now();
+    const frameGap = now - lastFrameAt;
+    lastFrameAt = now;
+    const transition = focusTransitionForFrame(frameGap, isAway, document.hidden, suspendedFrameThreshold);
+    if (transition === "leave") markAway();
+    else if (transition === "return") markReturned(false);
+    state.animationFrameId = requestAnimationFrame(detectSuspendedFrame);
+  };
+  state.animationFrameId = requestAnimationFrame(detectSuspendedFrame);
   addListener(document, "copy", (event) => event.preventDefault());
   addListener(document, "cut", (event) => event.preventDefault());
   addListener(document, "contextmenu", (event) => event.preventDefault());
@@ -795,7 +835,7 @@ function renderWriting({ draft = "", preserveSession = false } = {}) {
       <div id="watermark-layer" class="watermark-layer" aria-hidden="true"></div>
       <div class="write-frame">
         <div class="write-toolbar"><button id="leave-writing" class="text-button write-back" type="button">${tr("← 返回")}</button>${languageSwitcher()}</div>
-        <header class="write-head"><div><p class="eyebrow">${escapeHtml(test.className || tr("現場聽寫"))}</p><h2>${escapeHtml(test.title)}</h2><p class="meta">${escapeHtml(test.instructions || tr("聽老師播放或朗讀後，依序輸入內容。"))}</p></div><div class="student-chip"><strong>${escapeHtml(state.studentName)}</strong> · ${tr("裝置 {code}", { code: getDeviceCode() })}</div></header>
+        <header class="write-head"><div><p class="eyebrow">${escapeHtml(test.className || tr("現場聽寫"))}</p><h2>${escapeHtml(test.title)}</h2><p class="meta">${escapeHtml(test.instructions || tr("聽老師播放或朗讀後，依序輸入內容。"))}</p></div><div class="student-chip"><strong>${escapeHtml(state.studentName)}</strong><span>${tr("裝置 {code}", { code: getDeviceCode() })}</span><span id="focus-leave-counter" class="focus-counter good">${tr("離開畫面 {count} 次", { count: state.focusLeaves })}</span></div></header>
         <form id="writing-form" class="card writing-card">
           <textarea id="writing-area" class="writing-area" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="${tr("聽寫作答區")}" placeholder="${tr("在這裡開始輸入⋯")}" required></textarea>
           <div class="writing-footer"><p>${tr("禁止貼上 · 離開畫面會留下紀錄 · 交卷後不能修改")}</p><button class="button" type="submit">${tr("完成並交卷")}</button></div>
@@ -812,7 +852,7 @@ function renderWriting({ draft = "", preserveSession = false } = {}) {
   protectWriting(area);
   bindLanguageSwitcher(() => renderWriting({ draft: area.value, preserveSession: true }));
   document.querySelector("#leave-writing").addEventListener("click", () => {
-    if (area.value.trim() && !confirm(tr("返回後，目前輸入的內容不會保留。確定要返回嗎？"))) return;
+    if (area.value.trim() && !confirmAction(tr("返回後，目前輸入的內容不會保留。確定要返回嗎？"))) return;
     state.activeTest = null;
     renderStudentHome();
   });
@@ -820,7 +860,7 @@ function renderWriting({ draft = "", preserveSession = false } = {}) {
     event.preventDefault();
     const answer = area.value.trim();
     if (!answer) return showToast(tr("請先輸入聽寫內容。"));
-    if (!confirm(tr("交卷後不能修改。確定要提交嗎？"))) return;
+    if (!confirmAction(tr("交卷後不能修改。確定要提交嗎？"))) return;
     const button = event.currentTarget.querySelector("button[type=submit]");
     button.disabled = true;
     try {
