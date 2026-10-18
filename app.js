@@ -166,13 +166,13 @@ function getDeviceCode() {
 
 function addListener(target, type, handler, options) {
   target.addEventListener(type, handler, options);
-  state.listeners.push({ target, type, handler });
+  state.listeners.push({ target, type, handler, options });
 }
 
 function cleanupView() {
   state.unsubscribers.forEach((unsubscribe) => unsubscribe());
   state.unsubscribers = [];
-  state.listeners.forEach(({ target, type, handler }) => target.removeEventListener(type, handler));
+  state.listeners.forEach(({ target, type, handler, options }) => target.removeEventListener(type, handler, options));
   state.listeners = [];
   state.timers.forEach((timer) => clearTimeout(timer));
   state.timers = [];
@@ -743,9 +743,11 @@ function protectWriting(area) {
   const shield = document.querySelector("#privacy-shield");
   const focusCounter = document.querySelector("#focus-leave-counter");
   const suspendedFrameThreshold = 1000;
+  const bottomGestureZone = 96;
   let isAway = false;
   let blurTimer = null;
   let lastFrameAt = Date.now();
+  let bottomGestureStartedAt = 0;
   const updateFocusCounter = () => {
     if (!focusCounter) return;
     focusCounter.textContent = tr("離開畫面 {count} 次", { count: state.focusLeaves });
@@ -759,9 +761,18 @@ function protectWriting(area) {
     state.focusLeaves += 1;
     updateFocusCounter();
   };
+  const clearBottomGesture = () => {
+    bottomGestureStartedAt = 0;
+  };
+  const recoverInterruptedBottomGesture = () => {
+    if (!bottomGestureStartedAt || Date.now() - bottomGestureStartedAt < 500) return;
+    clearBottomGesture();
+    markAway();
+  };
   const markReturned = (detectSuspendedFrame = true) => {
     if (blurTimer) clearTimeout(blurTimer);
     blurTimer = null;
+    recoverInterruptedBottomGesture();
     const now = Date.now();
     const frameGap = now - lastFrameAt;
     if (detectSuspendedFrame && focusTransitionForFrame(frameGap, isAway, document.hidden, suspendedFrameThreshold) === "leave") markAway();
@@ -770,6 +781,15 @@ function protectWriting(area) {
     lastFrameAt = now;
     shield.classList.add("hidden");
     if (wasAway) showToast(tr("已記錄離開畫面 {count} 次。", { count: state.focusLeaves }));
+  };
+  const trackBottomGesture = (clientY) => {
+    recoverInterruptedBottomGesture();
+    if (clientY >= window.innerHeight - bottomGestureZone) bottomGestureStartedAt = Date.now();
+  };
+  const cancelSystemGesture = () => {
+    const startedFromBottom = bottomGestureStartedAt > 0;
+    clearBottomGesture();
+    if (startedFromBottom) markAway();
   };
   addListener(document, "visibilitychange", () => document.hidden ? markAway() : markReturned(true));
   addListener(window, "pagehide", markAway);
@@ -785,6 +805,15 @@ function protectWriting(area) {
   });
   addListener(window, "focus", () => markReturned(true));
   addListener(window, "tingxie-dialog-closed", () => markReturned(false));
+  addListener(document, "pointerdown", (event) => trackBottomGesture(event.clientY), true);
+  addListener(document, "pointerup", clearBottomGesture, true);
+  addListener(document, "pointercancel", cancelSystemGesture, true);
+  addListener(document, "touchstart", (event) => {
+    const touch = event.touches[0];
+    if (touch) trackBottomGesture(touch.clientY);
+  }, { capture: true, passive: true });
+  addListener(document, "touchend", clearBottomGesture, true);
+  addListener(document, "touchcancel", cancelSystemGesture, true);
   const detectSuspendedFrame = () => {
     const now = Date.now();
     const frameGap = now - lastFrameAt;
@@ -837,7 +866,7 @@ function renderWriting({ draft = "", preserveSession = false } = {}) {
         <div class="write-toolbar"><button id="leave-writing" class="text-button write-back" type="button">${tr("← 返回")}</button>${languageSwitcher()}</div>
         <header class="write-head"><div><p class="eyebrow">${escapeHtml(test.className || tr("現場聽寫"))}</p><h2>${escapeHtml(test.title)}</h2><p class="meta">${escapeHtml(test.instructions || tr("聽老師播放或朗讀後，依序輸入內容。"))}</p></div><div class="student-chip"><strong>${escapeHtml(state.studentName)}</strong><span>${tr("裝置 {code}", { code: getDeviceCode() })}</span><span id="focus-leave-counter" class="focus-counter good">${tr("離開畫面 {count} 次", { count: state.focusLeaves })}</span></div></header>
         <form id="writing-form" class="card writing-card">
-          <textarea id="writing-area" class="writing-area" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="${tr("聽寫作答區")}" placeholder="${tr("在這裡開始輸入⋯")}" required></textarea>
+          <textarea id="writing-area" class="writing-area" lang="zh-Hant" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="${tr("聽寫作答區")}" placeholder="${tr("在這裡開始輸入⋯")}" required></textarea>
           <div class="writing-footer"><p>${tr("禁止貼上 · 離開畫面會留下紀錄 · 交卷後不能修改")}</p><button class="button" type="submit">${tr("完成並交卷")}</button></div>
         </form>
       </div>

@@ -90,7 +90,7 @@ input:focus, textarea:focus { border-color: #668fb5; box-shadow: 0 0 0 4px rgba(
 .student-chip .focus-counter.good { color: var(--green); background: #e8f5ef; }
 .student-chip .focus-counter.warn { color: var(--red); background: #fff0ed; }
 .writing-card { padding: clamp(21px, 5vw, 43px); }
-.writing-area { min-height: 52vh; border: 0; border-radius: 0; padding: 3px 0; background: repeating-linear-gradient(white 0, white 42px, #dde5e9 43px); box-shadow: none; font-family: "BiauKai", "DFKai-SB", "標楷體", "KaiTi", "STKaiti", serif; font-size: clamp(1.12rem, 2.5vw, 1.4rem); line-height: 43px; }
+.writing-area { min-height: 52vh; border: 0; border-radius: 0; padding: 4px 0; background: repeating-linear-gradient(white 0, white 55px, #dde5e9 56px); box-shadow: none; font-family: "BiauKai", "DFKai-SB", "標楷體", "KaiTi", "STKaiti", serif; font-size: clamp(1.5rem, 4vw, 2rem); line-height: 56px; }
 .writing-area:focus { box-shadow: none; }
 .writing-footer { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-top: 21px; }
 .writing-footer p { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.55; }
