@@ -69,13 +69,6 @@ input:focus, textarea:focus { border-color: #668fb5; box-shadow: 0 0 0 4px rgba(
 .button.small { min-height: 40px; padding: 0 13px; font-size: .84rem; }
 .notice { margin: 17px 0; padding: 13px 15px; border-left: 4px solid #d39a39; border-radius: 8px; color: #725315; background: #fff8e7; font-size: .88rem; line-height: 1.6; }
 
-.teacher-tool { max-width: 780px; margin: 24px auto 70px; padding: clamp(23px, 5vw, 38px); }
-.teacher-tool-head { display: flex; justify-content: space-between; gap: 22px; align-items: flex-start; }
-.teacher-tool p { color: var(--muted); line-height: 1.7; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.link-result { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 18px; }
-.link-result input { color: #526678; font-size: .85rem; }
-
 .write-shell { min-height: 100vh; padding: 20px; background: #f6f2e9; }
 .write-frame { position: relative; z-index: 2; width: min(920px, 100%); margin: 0 auto; }
 .write-head { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin: 15px 0 24px; }
@@ -125,9 +118,8 @@ input:focus, textarea:focus { border-color: #668fb5; box-shadow: 0 0 0 4px rgba(
   .hero-copy { text-align: center; }
   .lead { margin-inline: auto; }
   .feature-list { justify-content: center; }
-  .form-grid, .identity-grid { grid-template-columns: 1fr; }
-  .link-result { grid-template-columns: 1fr; }
-  .teacher-tool-head, .write-head, .writing-footer { flex-direction: column; align-items: stretch; }
+  .identity-grid { grid-template-columns: 1fr; }
+  .write-head, .writing-footer { flex-direction: column; align-items: stretch; }
   .student-chip { align-self: flex-start; }
   .result-shell { padding: 12px; }
   .result-band { padding: 15px 18px; }

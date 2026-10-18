@@ -109,7 +109,6 @@ function renderHome() {
           <button class="button full" type="submit">確認姓名並開始</button>
         </form>
       </section>
-      ${fixedTest ? "" : teacherTool()}
     </div></main>
   `;
 
@@ -125,47 +124,6 @@ function renderHome() {
     renderWriting();
   });
 
-  if (!fixedTest) bindTeacherTool();
-}
-
-function teacherTool() {
-  return `
-    <section class="card teacher-tool">
-      <div class="teacher-tool-head"><div><p class="eyebrow">Teacher link maker</p><h2>老師建立專用連結</h2><p>先填入測驗名稱和班級，再把產生的網址貼到班級群組。所有資料都只放在網址中，不會上傳到伺服器。</p></div></div>
-      <form id="link-form">
-        <div class="form-grid">
-          <div class="field"><label for="link-title">聽寫名稱</label><input id="link-title" name="title" maxlength="80" required placeholder="例如：第六課生詞聽寫" /></div>
-          <div class="field"><label for="link-class">班級</label><input id="link-class" name="className" maxlength="60" placeholder="例如：三年二班" /></div>
-        </div>
-        <button class="button secondary" type="submit">產生學生連結</button>
-      </form>
-      <div id="link-result" class="link-result hidden"><input id="student-link" readonly aria-label="學生連結" /><button id="copy-link" class="button small" type="button">複製連結</button></div>
-    </section>`;
-}
-
-function bindTeacherTool() {
-  document.querySelector("#link-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const title = String(data.get("title") || "").trim();
-    const className = String(data.get("className") || "").trim();
-    const url = new URL(location.href);
-    url.search = "";
-    url.searchParams.set("title", title);
-    if (className) url.searchParams.set("class", className);
-    document.querySelector("#student-link").value = url.toString();
-    document.querySelector("#link-result").classList.remove("hidden");
-  });
-  document.querySelector("#copy-link").addEventListener("click", async () => {
-    const link = document.querySelector("#student-link");
-    try {
-      await navigator.clipboard.writeText(link.value);
-      showToast("學生連結已複製。");
-    } catch {
-      link.select();
-      showToast("請長按或按 Command+C 複製連結。");
-    }
-  });
 }
 
 function renderWatermarks() {
