@@ -1,19 +1,51 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+import {
+  browserLocalPersistence,
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  setPersistence,
+  signInWithPopup,
+  signOut
+} from "https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js";
+import {
+  collection,
+  doc,
+  getDoc,
+  getFirestore,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where
+} from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
+import { firebaseConfig } from "./firebase-config.js";
+
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
+const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: "select_account" });
+setPersistence(auth, browserLocalPersistence).catch(() => {});
+
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 
 const state = {
-  name: "",
-  className: "",
-  title: "",
-  deviceCode: "",
+  user: null,
+  isAdmin: false,
+  activeTest: null,
+  studentName: "",
+  unsubscribers: [],
+  listeners: [],
   startedAt: 0,
   keyEvents: 0,
   pasteAttempts: 0,
   focusLeaves: 0,
   suspiciousInsertions: 0,
   lastLength: 0,
-  isComposing: false,
-  listeners: []
+  isComposing: false
 };
 
 function escapeHtml(value = "") {
@@ -26,22 +58,22 @@ function showToast(message) {
   toast.textContent = message;
   toast.classList.add("show");
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => toast.classList.remove("show"), 2500);
+  showToast.timer = setTimeout(() => toast.classList.remove("show"), 3000);
 }
 
-function readTestFromUrl() {
-  const params = new URLSearchParams(location.search);
-  return {
-    title: (params.get("title") || "").trim().slice(0, 80),
-    className: (params.get("class") || "").trim().slice(0, 60)
-  };
+function formatTime(value) {
+  if (!value) return "處理中";
+  const date = typeof value.toDate === "function" ? value.toDate() : new Date(value);
+  return new Intl.DateTimeFormat("zh-TW", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+  }).format(date);
 }
 
 function getDeviceCode() {
-  let deviceId = localStorage.getItem("tingxie_static_device");
+  let deviceId = localStorage.getItem("tingxie_firebase_device");
   if (!deviceId) {
     deviceId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-    localStorage.setItem("tingxie_static_device", deviceId);
+    localStorage.setItem("tingxie_firebase_device", deviceId);
   }
   let hash = 2166136261;
   for (const character of deviceId) {
@@ -56,10 +88,364 @@ function addListener(target, type, handler, options) {
   state.listeners.push({ target, type, handler });
 }
 
-function cleanup() {
+function cleanupView() {
+  state.unsubscribers.forEach((unsubscribe) => unsubscribe());
+  state.unsubscribers = [];
   state.listeners.forEach(({ target, type, handler }) => target.removeEventListener(type, handler));
   state.listeners = [];
-  document.body.classList.remove("screenshot-mode");
+  document.body.classList.remove("exam-mode");
+}
+
+function renderLoading(message = "正在連接聽寫室⋯") {
+  app.innerHTML = `<main class="loading-screen"><div class="loading-mark">聽</div><p>${escapeHtml(message)}</p></main>`;
+}
+
+function roleShell(content, activeView) {
+  const teacherNavigation = `
+    <button class="nav-tab ${activeView === "tests" ? "active" : ""}" data-nav="tests">測驗管理</button>
+    <button class="nav-tab ${activeView === "grading" ? "active" : ""}" data-nav="grading">批改中心</button>`;
+  const studentNavigation = `
+    <button class="nav-tab ${activeView === "take" ? "active" : ""}" data-nav="take">開始測驗</button>
+    <button class="nav-tab ${activeView === "results" ? "active" : ""}" data-nav="results">我的成績</button>`;
+  return `
+    <main class="app-shell">
+      <header class="app-header">
+        <div class="brand"><span class="brand-mark">聽</span> 聽寫室</div>
+        <div class="account-block">
+          ${state.user.photoURL ? `<img class="avatar" src="${escapeHtml(state.user.photoURL)}" alt="" referrerpolicy="no-referrer" />` : ""}
+          <div><strong>${escapeHtml(state.user.displayName || state.user.email)}</strong><span>${state.isAdmin ? "老師帳號" : "學生帳號"}</span></div>
+          <button id="sign-out" class="button secondary small">登出</button>
+        </div>
+      </header>
+      <div class="app-body">
+        <nav class="app-nav">${state.isAdmin ? teacherNavigation : studentNavigation}</nav>
+        <section class="app-content">${content}</section>
+      </div>
+    </main>`;
+}
+
+function bindShellNavigation() {
+  document.querySelector("#sign-out").addEventListener("click", () => signOut(auth));
+  document.querySelectorAll("[data-nav]").forEach((button) => button.addEventListener("click", () => {
+    const view = button.dataset.nav;
+    if (view === "tests") renderTeacherTests();
+    if (view === "grading") renderTeacherAllSubmissions();
+    if (view === "take") renderStudentHome();
+    if (view === "results") renderStudentResults();
+  }));
+}
+
+function renderLogin() {
+  cleanupView();
+  app.innerHTML = `
+    <main class="shell"><div class="frame">
+      <header class="topbar"><div class="brand"><span class="brand-mark">聽</span> 聽寫室</div><div class="device-pill">Firebase 安全登入</div></header>
+      <section class="hero login-hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Classroom dictation</p>
+          <h1>聽寫室<span>登入、作答、批改。</span></h1>
+          <p class="lead">學生使用 Google 帳號登入後作答。老師在管理介面建立測驗、查看答案、輸入成績與訂正，學生可在自己的帳號中查看結果。</p>
+          <ul class="feature-list"><li>Google 登入</li><li>雲端交卷</li><li>老師批改</li><li>個人成績</li></ul>
+        </div>
+        <section class="card login-card">
+          <p class="eyebrow">Secure sign in</p>
+          <h2>登入聽寫室</h2>
+          <p>請使用你的 Google 帳號。學生只能查看自己的答案和成績。</p>
+          <button id="google-login" class="button google-button full"><span class="google-mark">G</span>使用 Google 登入</button>
+          <div class="notice">第一次登入時，Google 會要求你確認帳號。網站不會取得你的 Google 密碼。</div>
+        </section>
+      </section>
+    </div></main>`;
+  document.querySelector("#google-login").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      const messages = {
+        "auth/unauthorized-domain": "請先把 fangdongyzu.github.io 加入 Firebase Authentication 的 Authorized domains。",
+        "auth/popup-blocked": "瀏覽器阻擋了登入視窗，請允許彈出式視窗後再試。",
+        "auth/popup-closed-by-user": "登入視窗已關閉，請重新登入。"
+      };
+      showToast(messages[error.code] || `登入失敗：${error.message}`);
+      button.disabled = false;
+    }
+  });
+}
+
+async function syncUserProfile(user) {
+  const profileRef = doc(db, "users", user.uid);
+  const profile = await getDoc(profileRef);
+  const data = {
+    displayName: user.displayName || "",
+    email: user.email || "",
+    photoURL: user.photoURL || "",
+    lastLoginAt: serverTimestamp()
+  };
+  if (profile.exists()) await updateDoc(profileRef, data);
+  else await setDoc(profileRef, { ...data, createdAt: serverTimestamp() });
+}
+
+async function loadAccount(user) {
+  state.user = user;
+  const adminSnapshot = await getDoc(doc(db, "admins", user.uid));
+  state.isAdmin = adminSnapshot.exists();
+  await syncUserProfile(user);
+  if (state.isAdmin) renderTeacherTests();
+  else renderStudentHome();
+}
+
+function renderFirebaseError(error) {
+  cleanupView();
+  const uid = state.user?.uid || "尚未取得";
+  app.innerHTML = `
+    <main class="shell"><div class="frame"><section class="card setup-card">
+      <p class="eyebrow">Firebase setup needed</p>
+      <h2>Firebase 尚未完成設定</h2>
+      <p class="lead">請確認已啟用 Google 登入、建立 Firestore Database，並部署專案內的 <code>firestore.rules</code>。</p>
+      <div class="notice error-notice"><strong>${escapeHtml(error.code || "firebase/error")}</strong><br />${escapeHtml(error.message)}</div>
+      <div class="uid-box"><span>目前帳號 UID</span><code>${escapeHtml(uid)}</code><button id="copy-uid" class="button secondary small">複製 UID</button></div>
+      <button id="retry-account" class="button">重新檢查</button>
+      <button id="setup-sign-out" class="button secondary">登出</button>
+    </section></div></main>`;
+  document.querySelector("#copy-uid").addEventListener("click", () => navigator.clipboard.writeText(uid).then(() => showToast("UID 已複製。")));
+  document.querySelector("#retry-account").addEventListener("click", () => loadAccount(state.user).catch(renderFirebaseError));
+  document.querySelector("#setup-sign-out").addEventListener("click", () => signOut(auth));
+}
+
+function randomTestCode() {
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+}
+
+async function createUniqueTestCode() {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const code = randomTestCode();
+    if (!(await getDoc(doc(db, "tests", code))).exists()) return code;
+  }
+  throw new Error("無法產生測驗代碼，請再試一次。");
+}
+
+function renderTeacherTests() {
+  cleanupView();
+  app.innerHTML = roleShell(`
+    <div class="page-heading-row"><div><p class="eyebrow">Teacher dashboard</p><h2>測驗管理</h2><p>建立現場聽寫，將六位代碼提供給學生。</p></div></div>
+    <div class="dashboard-grid">
+      <form id="create-test" class="card panel-card">
+        <h3>建立新測驗</h3>
+        <div class="field"><label for="test-title">測驗名稱</label><input id="test-title" name="title" maxlength="80" required placeholder="例如：第六課生詞聽寫" /></div>
+        <div class="field"><label for="class-name">班級（選填）</label><input id="class-name" name="className" maxlength="60" placeholder="例如：三年二班" /></div>
+        <div class="field"><label for="instructions">作答說明（選填）</label><textarea id="instructions" name="instructions" maxlength="300" placeholder="例如：老師每題播放兩次。"></textarea></div>
+        <button class="button full" type="submit">建立測驗代碼</button>
+      </form>
+      <section class="card panel-card"><div class="panel-heading"><h3>我的測驗</h3><span id="test-count" class="meta"></span></div><div id="test-list" class="record-list"><div class="empty-state">正在載入測驗⋯</div></div></section>
+    </div>`, "tests");
+  bindShellNavigation();
+  document.querySelector("#create-test").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector("button[type=submit]");
+    const data = new FormData(form);
+    button.disabled = true;
+    try {
+      const code = await createUniqueTestCode();
+      await setDoc(doc(db, "tests", code), {
+        code,
+        title: String(data.get("title") || "").trim().slice(0, 80),
+        className: String(data.get("className") || "").trim().slice(0, 60),
+        instructions: String(data.get("instructions") || "").trim().slice(0, 300),
+        status: "open",
+        createdBy: state.user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      form.reset();
+      showToast(`測驗已建立，代碼：${code}`);
+    } catch (error) {
+      showToast(`建立失敗：${error.message}`);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  const unsubscribe = onSnapshot(collection(db, "tests"), (snapshot) => {
+    const tests = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
+      .sort((left, right) => (right.createdAt?.seconds || 0) - (left.createdAt?.seconds || 0));
+    document.querySelector("#test-count").textContent = `${tests.length} 份`;
+    const list = document.querySelector("#test-list");
+    list.innerHTML = tests.length ? tests.map((test) => `
+      <article class="record-card">
+        <div class="record-top"><div><h3>${escapeHtml(test.title)}</h3><span class="meta">${escapeHtml(test.className || "未指定班級")} · ${formatTime(test.createdAt)}</span></div><span class="status ${test.status}">${test.status === "open" ? "開放中" : "已關閉"}</span></div>
+        <div class="test-code">${test.code}</div>
+        <div class="row-actions"><button class="button small" data-view-test="${test.id}">查看交卷</button><button class="button secondary small" data-copy-code="${test.code}">複製代碼</button><button class="button secondary small" data-toggle-test="${test.id}" data-status="${test.status}">${test.status === "open" ? "關閉測驗" : "重新開放"}</button></div>
+      </article>`).join("") : '<div class="empty-state">還沒有測驗。建立第一份測驗後，學生即可加入。</div>';
+    list.querySelectorAll("[data-view-test]").forEach((button) => button.addEventListener("click", () => renderTeacherSubmissions(button.dataset.viewTest)));
+    list.querySelectorAll("[data-copy-code]").forEach((button) => button.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(button.dataset.copyCode);
+      showToast("測驗代碼已複製。");
+    }));
+    list.querySelectorAll("[data-toggle-test]").forEach((button) => button.addEventListener("click", async () => {
+      await updateDoc(doc(db, "tests", button.dataset.toggleTest), {
+        status: button.dataset.status === "open" ? "closed" : "open",
+        updatedAt: serverTimestamp()
+      });
+    }));
+  }, (error) => showToast(`讀取測驗失敗：${error.message}`));
+  state.unsubscribers.push(unsubscribe);
+}
+
+function submissionCard(submission, showTest = false) {
+  const graded = submission.status === "graded";
+  return `
+    <article class="record-card submission-card">
+      <div class="record-top"><div><h3>${escapeHtml(submission.studentName)}</h3><span class="meta">${escapeHtml(submission.studentEmail)} · ${formatTime(submission.submittedAt)}</span></div><span class="status ${graded ? "graded" : "submitted"}">${graded ? "已批改" : "待批改"}</span></div>
+      ${showTest ? `<p class="record-context">${escapeHtml(submission.testTitle)} · ${escapeHtml(submission.className || "未指定班級")}</p>` : ""}
+      <p class="answer-preview">${escapeHtml(submission.answer)}</p>
+      <div class="integrity-line"><span>裝置 ${escapeHtml(submission.deviceCode)}</span><span>離開 ${submission.metrics?.focusLeaves || 0} 次</span><span>貼上 ${submission.metrics?.pasteAttempts || 0} 次</span>${graded ? `<strong>成績：${escapeHtml(submission.grade)}</strong>` : ""}</div>
+      <div class="row-actions"><button class="button small" data-grade-id="${submission.id}">${graded ? "查看／修改批改" : "開始批改"}</button></div>
+    </article>`;
+}
+
+function renderTeacherSubmissions(testId) {
+  cleanupView();
+  app.innerHTML = roleShell(`
+    <button id="back-tests" class="text-button">← 返回測驗管理</button>
+    <div id="test-heading" class="page-heading-row"><div><p class="eyebrow">Test submissions</p><h2>學生交卷</h2><p>正在載入測驗資料⋯</p></div></div>
+    <div id="submission-list" class="record-list"><div class="empty-state">正在載入交卷⋯</div></div>`, "tests");
+  bindShellNavigation();
+  document.querySelector("#back-tests").addEventListener("click", renderTeacherTests);
+  const testUnsubscribe = onSnapshot(doc(db, "tests", testId), (snapshot) => {
+    if (!snapshot.exists()) return;
+    const test = snapshot.data();
+    document.querySelector("#test-heading").innerHTML = `<div><p class="eyebrow">${escapeHtml(test.className || "現場聽寫")}</p><h2>${escapeHtml(test.title)}</h2><p>測驗代碼 <strong>${test.code}</strong></p></div>`;
+  });
+  const submissionsQuery = query(collection(db, "submissions"), where("testId", "==", testId));
+  const submissionUnsubscribe = onSnapshot(submissionsQuery, (snapshot) => {
+    const submissions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
+      .sort((left, right) => (right.submittedAt?.seconds || 0) - (left.submittedAt?.seconds || 0));
+    const list = document.querySelector("#submission-list");
+    list.innerHTML = submissions.length ? submissions.map((submission) => submissionCard(submission)).join("") : '<div class="empty-state">目前還沒有學生交卷。</div>';
+    bindGradeButtons(() => renderTeacherSubmissions(testId));
+  }, (error) => showToast(`讀取交卷失敗：${error.message}`));
+  state.unsubscribers.push(testUnsubscribe, submissionUnsubscribe);
+}
+
+function renderTeacherAllSubmissions() {
+  cleanupView();
+  app.innerHTML = roleShell(`
+    <div class="page-heading-row"><div><p class="eyebrow">Grading center</p><h2>批改中心</h2><p>所有學生的交卷與批改狀態。</p></div></div>
+    <div id="all-submissions" class="record-list"><div class="empty-state">正在載入交卷⋯</div></div>`, "grading");
+  bindShellNavigation();
+  const unsubscribe = onSnapshot(collection(db, "submissions"), (snapshot) => {
+    const submissions = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
+      .sort((left, right) => (right.submittedAt?.seconds || 0) - (left.submittedAt?.seconds || 0));
+    const list = document.querySelector("#all-submissions");
+    list.innerHTML = submissions.length ? submissions.map((submission) => submissionCard(submission, true)).join("") : '<div class="empty-state">目前還沒有學生交卷。</div>';
+    bindGradeButtons(renderTeacherAllSubmissions);
+  }, (error) => showToast(`讀取交卷失敗：${error.message}`));
+  state.unsubscribers.push(unsubscribe);
+}
+
+function bindGradeButtons(returnView) {
+  document.querySelectorAll("[data-grade-id]").forEach((button) => button.addEventListener("click", () => renderGradeEditor(button.dataset.gradeId, returnView)));
+}
+
+async function renderGradeEditor(submissionId, returnView) {
+  cleanupView();
+  renderLoading("正在開啟學生答案⋯");
+  try {
+    const snapshot = await getDoc(doc(db, "submissions", submissionId));
+    if (!snapshot.exists()) throw new Error("找不到這份交卷。");
+    const submission = { id: snapshot.id, ...snapshot.data() };
+    app.innerHTML = roleShell(`
+      <button id="back-submissions" class="text-button">← 返回交卷列表</button>
+      <div class="grade-layout">
+        <section class="card panel-card">
+          <p class="eyebrow">Student answer</p><h2>${escapeHtml(submission.testTitle)}</h2>
+          <div class="student-summary"><strong>${escapeHtml(submission.studentName)}</strong><span>${escapeHtml(submission.studentEmail)}</span><span>裝置 ${escapeHtml(submission.deviceCode)}</span><span>${formatTime(submission.submittedAt)}</span></div>
+          <div class="answer-label">學生答案</div><p class="final-answer">${escapeHtml(submission.answer)}</p>
+          <div class="integrity-line"><span>作答 ${Math.max(1, Math.round((submission.metrics?.durationSeconds || 0) / 60))} 分鐘</span><span>離開畫面 ${submission.metrics?.focusLeaves || 0} 次</span><span>貼上嘗試 ${submission.metrics?.pasteAttempts || 0} 次</span><span>異常插入 ${submission.metrics?.suspiciousInsertions || 0} 次</span></div>
+        </section>
+        <form id="grade-form" class="card panel-card grade-panel">
+          <p class="eyebrow">Teacher review</p><h3>成績與訂正</h3>
+          <div class="field"><label for="grade">成績</label><input id="grade" name="grade" maxlength="20" required placeholder="例如：95、A、通過" value="${escapeHtml(submission.grade || "")}" /></div>
+          <div class="field"><label for="correction">正確答案／訂正</label><textarea id="correction" name="correction" maxlength="10000" placeholder="輸入正確內容或需要修改的部分">${escapeHtml(submission.correction || "")}</textarea></div>
+          <div class="field"><label for="feedback">老師評語</label><textarea id="feedback" name="feedback" maxlength="2000" placeholder="給學生的建議">${escapeHtml(submission.feedback || "")}</textarea></div>
+          <button class="button full" type="submit">儲存並傳送給學生</button>
+        </form>
+      </div>`, "grading");
+    bindShellNavigation();
+    document.querySelector("#back-submissions").addEventListener("click", returnView);
+    document.querySelector("#grade-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector("button[type=submit]");
+      const data = new FormData(form);
+      button.disabled = true;
+      try {
+        await updateDoc(doc(db, "submissions", submissionId), {
+          grade: String(data.get("grade") || "").trim().slice(0, 20),
+          correction: String(data.get("correction") || "").trim().slice(0, 10000),
+          feedback: String(data.get("feedback") || "").trim().slice(0, 2000),
+          status: "graded",
+          gradedAt: serverTimestamp(),
+          gradedBy: state.user.uid
+        });
+        showToast("批改已儲存，學生現在可以查看。");
+        returnView();
+      } catch (error) {
+        showToast(`儲存失敗：${error.message}`);
+        button.disabled = false;
+      }
+    });
+  } catch (error) {
+    renderFirebaseError(error);
+  }
+}
+
+function renderStudentHome() {
+  cleanupView();
+  app.innerHTML = roleShell(`
+    <div class="student-home-grid">
+      <div class="student-intro"><p class="eyebrow">Student test</p><h1>準備聽寫<span>輸入代碼，開始作答。</span></h1><p class="lead">請向老師取得六位測驗代碼。交卷後，老師會在批改中心輸入成績、訂正與評語。</p></div>
+      <form id="join-test" class="card start-card">
+        <h2>加入測驗</h2>
+        <div class="field"><label for="test-code">六位測驗代碼</label><input id="test-code" class="code-input" name="code" maxlength="6" autocomplete="off" autocapitalize="characters" required placeholder="ABC123" /></div>
+        <div class="field"><label for="student-name">交卷姓名</label><input id="student-name" name="studentName" maxlength="40" required value="${escapeHtml(state.user.displayName || "")}" /></div>
+        <button class="button full" type="submit">尋找測驗</button>
+        <div class="account-note"><span>Google 帳號</span><strong>${escapeHtml(state.user.email)}</strong><button id="copy-student-uid" type="button" class="text-button">複製帳號 UID</button></div>
+      </form>
+    </div>`, "take");
+  bindShellNavigation();
+  document.querySelector("#copy-student-uid").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(state.user.uid);
+    showToast("帳號 UID 已複製。老師第一次設定權限時會用到它。");
+  });
+  document.querySelector("#join-test").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector("button[type=submit]");
+    const data = new FormData(form);
+    const code = String(data.get("code") || "").trim().toUpperCase();
+    button.disabled = true;
+    try {
+      const testSnapshot = await getDoc(doc(db, "tests", code));
+      if (!testSnapshot.exists()) throw new Error("找不到這個測驗代碼。");
+      const test = { id: testSnapshot.id, ...testSnapshot.data() };
+      if (test.status !== "open") throw new Error("老師已關閉這個測驗。");
+      const submissionSnapshot = await getDoc(doc(db, "submissions", `${test.id}_${state.user.uid}`));
+      if (submissionSnapshot.exists()) {
+        showToast("你已經交過這份測驗，正在開啟結果。");
+        renderStudentResults();
+        return;
+      }
+      state.activeTest = test;
+      state.studentName = String(data.get("studentName") || "").trim().slice(0, 40);
+      renderWriting();
+    } catch (error) {
+      showToast(error.message);
+      button.disabled = false;
+    }
+  });
 }
 
 function preventPaste(element) {
@@ -77,97 +463,12 @@ function preventPaste(element) {
   });
 }
 
-function renderHome() {
-  cleanup();
-  const test = readTestFromUrl();
-  state.deviceCode = getDeviceCode();
-  const fixedTest = Boolean(test.title);
-  app.innerHTML = `
-    <main class="shell"><div class="frame">
-      <header class="topbar">
-        <div class="brand"><span class="brand-mark">聽</span> 聽寫室</div>
-        <div class="device-pill">本機代碼 ${state.deviceCode}</div>
-      </header>
-      <section class="hero">
-        <div class="hero-copy">
-          <p class="eyebrow">Live classroom dictation</p>
-          <h1>聽寫室<span>專心聽，親手寫。</span></h1>
-          <p class="lead">老師現場播放或朗讀，學生只能親手輸入。完成後產生包含姓名、裝置代碼與時間的交卷畫面，再截圖傳給老師。</p>
-          <ul class="feature-list"><li>禁止貼上</li><li>姓名浮水印</li><li>裝置代碼</li><li>截圖交卷</li></ul>
-        </div>
-        <form id="start-form" class="card start-card">
-          <p class="eyebrow">Student entry</p>
-          <h2>開始聽寫</h2>
-          ${fixedTest ? `<div class="test-summary"><strong>${escapeHtml(test.title)}</strong><span>${escapeHtml(test.className || "現場聽寫")}</span></div>` : `
-            <div class="field"><label for="test-title">聽寫名稱（選填）</label><input id="test-title" name="title" maxlength="80" placeholder="例如：第六課生詞聽寫" /></div>
-            <div class="field"><label for="class-name">班級（選填）</label><input id="class-name" name="className" maxlength="60" placeholder="例如：三年二班" /></div>`}
-          <div class="field"><label for="student-name">真實姓名</label><input id="student-name" name="name" maxlength="40" autocomplete="off" autocorrect="off" spellcheck="false" required placeholder="例如：陳小明" /></div>
-          <div class="notice">開始後請勿切換畫面或貼上文字。你的姓名與裝置代碼會顯示在浮水印中。</div>
-          <button class="button full" type="submit">確認姓名並開始</button>
-        </form>
-      </section>
-    </div></main>
-  `;
-
-  preventPaste(document.querySelector("#student-name"));
-  document.querySelector("#start-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    state.name = String(formData.get("name") || "").trim().slice(0, 40);
-    state.title = fixedTest ? test.title : String(formData.get("title") || "").trim().slice(0, 80) || "中文聽寫";
-    state.className = fixedTest ? test.className : String(formData.get("className") || "").trim().slice(0, 60);
-    if (state.name.length < 2) return showToast("請輸入完整姓名。");
-    renderWriting();
-  });
-
-}
-
 function renderWatermarks() {
   const layer = document.querySelector("#watermark-layer");
   if (!layer) return;
+  const deviceCode = getDeviceCode();
   const positions = [[4,12], [46,9], [73,27], [16,43], [55,52], [3,70], [67,76], [28,91]];
-  layer.innerHTML = positions.map(([left, top]) => `
-    <span class="watermark" style="left:${left}%;top:${top}%">${escapeHtml(state.name)} · ${state.deviceCode}</span>
-  `).join("");
-}
-
-function renderWriting() {
-  cleanup();
-  state.startedAt = Date.now();
-  state.keyEvents = 0;
-  state.pasteAttempts = 0;
-  state.focusLeaves = 0;
-  state.suspiciousInsertions = 0;
-  state.lastLength = 0;
-  state.isComposing = false;
-  app.innerHTML = `
-    <main class="write-shell">
-      <div id="watermark-layer" class="watermark-layer" aria-hidden="true"></div>
-      <div class="write-frame">
-        <header class="write-head">
-          <div><p class="eyebrow">${escapeHtml(state.className || "現場聽寫")}</p><h2>${escapeHtml(state.title)}</h2><p class="meta">聽老師播放或朗讀後，依序輸入內容。</p></div>
-          <div class="student-chip"><strong>${escapeHtml(state.name)}</strong> · 裝置 ${state.deviceCode}</div>
-        </header>
-        <form id="writing-form" class="card writing-card">
-          <textarea id="writing-area" class="writing-area" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="聽寫作答區" placeholder="在這裡開始輸入⋯" required></textarea>
-          <div class="writing-footer"><p>禁止貼上 · 離開畫面會留下紀錄 · 完成後產生截圖畫面</p><button class="button" type="submit">完成聽寫</button></div>
-        </form>
-      </div>
-      <div id="privacy-shield" class="privacy-shield hidden"><div><strong>作答畫面已隱藏</strong>回到這個分頁後才能繼續。</div></div>
-    </main>`;
-
-  renderWatermarks();
-  const area = document.querySelector("#writing-area");
-  area.focus();
-  preventPaste(area);
-  protectWriting(area);
-  document.querySelector("#writing-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const answer = area.value.trim();
-    if (!answer) return showToast("請先輸入聽寫內容。");
-    if (!confirm("完成後會鎖定作答內容。確定嗎？")) return;
-    renderResult(answer);
-  });
+  layer.innerHTML = positions.map(([left, top]) => `<span class="watermark" style="left:${left}%;top:${top}%">${escapeHtml(state.studentName)} · ${deviceCode}</span>`).join("");
 }
 
 function protectWriting(area) {
@@ -187,7 +488,7 @@ function protectWriting(area) {
     if ((event.ctrlKey || event.metaKey) && ["c", "v", "x", "p", "s", "u"].includes(key)) {
       event.preventDefault();
       if (key === "v") state.pasteAttempts += 1;
-      showToast("這個快捷鍵在聽寫中已停用。");
+      showToast("這個快捷鍵在測驗中已停用。");
     }
     state.keyEvents += 1;
   });
@@ -200,49 +501,124 @@ function protectWriting(area) {
   });
 }
 
-function renderResult(answer) {
-  cleanup();
-  const completedAt = new Date();
-  const durationMinutes = Math.max(1, Math.round((Date.now() - state.startedAt) / 60000));
-  const completedText = new Intl.DateTimeFormat("zh-TW", {
-    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
-  }).format(completedAt);
-  const hasWarning = state.pasteAttempts || state.focusLeaves || state.suspiciousInsertions;
+function renderWriting() {
+  cleanupView();
+  document.body.classList.add("exam-mode");
+  state.startedAt = Date.now();
+  state.keyEvents = 0;
+  state.pasteAttempts = 0;
+  state.focusLeaves = 0;
+  state.suspiciousInsertions = 0;
+  state.lastLength = 0;
+  state.isComposing = false;
+  const test = state.activeTest;
   app.innerHTML = `
-    <main class="result-shell">
+    <main class="write-shell">
       <div id="watermark-layer" class="watermark-layer" aria-hidden="true"></div>
-      <div class="result-frame">
-        <div class="result-instruction"><p class="eyebrow">Screenshot submission</p><h2>交卷畫面</h2><p class="meta">請截圖完整畫面，傳給老師。內容較長時可分成多張截圖。</p></div>
-        <article class="card result-card">
-          <div class="result-band"><strong>聽寫完成</strong><span>${completedText}</span></div>
-          <div class="result-content">
-            <div class="result-title"><h1>${escapeHtml(state.title)}</h1><span class="meta">${escapeHtml(state.className || "現場聽寫")}</span></div>
-            <div class="identity-grid">
-              <div class="identity-item"><span>學生姓名</span><strong>${escapeHtml(state.name)}</strong></div>
-              <div class="identity-item"><span>裝置代碼</span><strong>${state.deviceCode}</strong></div>
-              <div class="identity-item"><span>作答時間</span><strong>${durationMinutes} 分鐘</strong></div>
-            </div>
-            <div class="answer-label">DICTATION ANSWER</div>
-            <p class="final-answer">${escapeHtml(answer)}</p>
-            <div class="integrity-line">
-              <span>鍵盤事件 ${state.keyEvents}</span>
-              <span>離開畫面 ${state.focusLeaves} 次</span>
-              <span>貼上嘗試 ${state.pasteAttempts} 次</span>
-              <span class="${hasWarning ? "warn" : "good"}">${hasWarning ? "偵測到需留意的操作" : "未偵測到明顯異常"}</span>
-            </div>
-          </div>
-        </article>
-        <div class="result-actions"><button id="screenshot-ready" class="button">準備截圖</button><button id="restart" class="button secondary">重新作答</button></div>
+      <div class="write-frame">
+        <header class="write-head"><div><p class="eyebrow">${escapeHtml(test.className || "現場聽寫")}</p><h2>${escapeHtml(test.title)}</h2><p class="meta">${escapeHtml(test.instructions || "聽老師播放或朗讀後，依序輸入內容。")}</p></div><div class="student-chip"><strong>${escapeHtml(state.studentName)}</strong> · 裝置 ${getDeviceCode()}</div></header>
+        <form id="writing-form" class="card writing-card">
+          <textarea id="writing-area" class="writing-area" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="聽寫作答區" placeholder="在這裡開始輸入⋯" required></textarea>
+          <div class="writing-footer"><p>禁止貼上 · 離開畫面會留下紀錄 · 交卷後不能修改</p><button class="button" type="submit">完成並交卷</button></div>
+        </form>
       </div>
+      <div id="privacy-shield" class="privacy-shield hidden"><div><strong>作答畫面已隱藏</strong>回到這個分頁後才能繼續。</div></div>
     </main>`;
   renderWatermarks();
-  document.querySelector("#screenshot-ready").addEventListener("click", () => {
-    document.body.classList.add("screenshot-mode");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  });
-  document.querySelector("#restart").addEventListener("click", () => {
-    if (confirm("確定要清除這份內容並重新開始嗎？")) renderHome();
+  const area = document.querySelector("#writing-area");
+  area.focus();
+  preventPaste(area);
+  protectWriting(area);
+  document.querySelector("#writing-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const answer = area.value.trim();
+    if (!answer) return showToast("請先輸入聽寫內容。");
+    if (!confirm("交卷後不能修改。確定要提交嗎？")) return;
+    const button = event.currentTarget.querySelector("button[type=submit]");
+    button.disabled = true;
+    try {
+      const submissionId = `${test.id}_${state.user.uid}`;
+      await setDoc(doc(db, "submissions", submissionId), {
+        testId: test.id,
+        testCode: test.code,
+        testTitle: test.title,
+        className: test.className || "",
+        userId: state.user.uid,
+        studentName: state.studentName,
+        studentEmail: state.user.email || "",
+        studentPhotoURL: state.user.photoURL || "",
+        answer,
+        deviceCode: getDeviceCode(),
+        startedAt: new Date(state.startedAt),
+        submittedAt: serverTimestamp(),
+        status: "submitted",
+        grade: null,
+        correction: "",
+        feedback: "",
+        gradedAt: null,
+        gradedBy: null,
+        metrics: {
+          durationSeconds: Math.round((Date.now() - state.startedAt) / 1000),
+          keyEvents: state.keyEvents,
+          pasteAttempts: state.pasteAttempts,
+          focusLeaves: state.focusLeaves,
+          suspiciousInsertions: state.suspiciousInsertions
+        }
+      });
+      renderSubmissionReceipt();
+    } catch (error) {
+      showToast(`交卷失敗：${error.message}`);
+      button.disabled = false;
+    }
   });
 }
 
-renderHome();
+function renderSubmissionReceipt() {
+  cleanupView();
+  app.innerHTML = roleShell(`
+    <section class="card receipt-card"><div class="success-mark">✓</div><p class="eyebrow">Submitted</p><h2>交卷成功</h2><p>${escapeHtml(state.studentName)}，你的「${escapeHtml(state.activeTest.title)}」已安全送交老師。</p><div class="notice success-notice">老師批改後，成績、訂正與評語會出現在「我的成績」。</div><button id="open-results" class="button">查看我的成績</button></section>`, "take");
+  bindShellNavigation();
+  document.querySelector("#open-results").addEventListener("click", renderStudentResults);
+}
+
+function renderStudentResults() {
+  cleanupView();
+  app.innerHTML = roleShell(`
+    <div class="page-heading-row"><div><p class="eyebrow">My results</p><h2>我的成績</h2><p>只有你和老師可以查看這些內容。</p></div></div>
+    <div id="student-results" class="record-list"><div class="empty-state">正在載入成績⋯</div></div>`, "results");
+  bindShellNavigation();
+  const resultsQuery = query(collection(db, "submissions"), where("userId", "==", state.user.uid));
+  const unsubscribe = onSnapshot(resultsQuery, (snapshot) => {
+    const results = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
+      .sort((left, right) => (right.submittedAt?.seconds || 0) - (left.submittedAt?.seconds || 0));
+    const container = document.querySelector("#student-results");
+    container.innerHTML = results.length ? results.map((result) => {
+      const graded = result.status === "graded";
+      return `
+        <article class="card result-record">
+          <div class="record-top"><div><p class="eyebrow">${escapeHtml(result.className || "現場聽寫")}</p><h3>${escapeHtml(result.testTitle)}</h3><span class="meta">交卷：${formatTime(result.submittedAt)}</span></div><span class="status ${graded ? "graded" : "submitted"}">${graded ? "已批改" : "等待批改"}</span></div>
+          ${graded ? `<div class="grade-display"><span>成績</span><strong>${escapeHtml(result.grade)}</strong></div>` : ""}
+          <div class="answer-label">我的答案</div><p class="result-answer">${escapeHtml(result.answer)}</p>
+          ${graded && result.correction ? `<div class="answer-label">正確答案／訂正</div><p class="correction-box">${escapeHtml(result.correction)}</p>` : ""}
+          ${graded && result.feedback ? `<div class="answer-label">老師評語</div><p class="feedback-box">${escapeHtml(result.feedback)}</p>` : ""}
+          ${graded ? `<p class="meta">批改時間：${formatTime(result.gradedAt)}</p>` : ""}
+        </article>`;
+    }).join("") : '<div class="empty-state">你還沒有交卷紀錄。</div>';
+  }, (error) => showToast(`讀取成績失敗：${error.message}`));
+  state.unsubscribers.push(unsubscribe);
+}
+
+renderLoading();
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    state.user = null;
+    state.isAdmin = false;
+    renderLogin();
+    return;
+  }
+  renderLoading("正在確認帳號權限⋯");
+  loadAccount(user).catch((error) => {
+    state.user = user;
+    renderFirebaseError(error);
+  });
+});

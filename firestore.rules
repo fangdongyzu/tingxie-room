@@ -1,0 +1,53 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    match /admins/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.keys().hasOnly([
+          'displayName', 'email', 'photoURL', 'createdAt', 'lastLoginAt'
+        ]);
+      allow delete: if false;
+    }
+
+    match /tests/{testId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /submissions/{submissionId} {
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && submissionId == request.resource.data.testId + '_' + request.auth.uid
+        && request.resource.data.studentEmail == request.auth.token.email
+        && request.resource.data.status == 'submitted'
+        && request.resource.data.grade == null
+        && request.resource.data.gradedAt == null
+        && request.resource.data.gradedBy == null
+        && request.resource.data.keys().hasOnly([
+          'testId', 'testCode', 'testTitle', 'className', 'userId',
+          'studentName', 'studentEmail', 'studentPhotoURL', 'answer',
+          'deviceCode', 'startedAt', 'submittedAt', 'status', 'grade',
+          'correction', 'feedback', 'gradedAt', 'gradedBy', 'metrics'
+        ]);
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+  }
+}
