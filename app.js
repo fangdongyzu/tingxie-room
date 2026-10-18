@@ -99,8 +99,8 @@ function renderHome() {
           <p class="eyebrow">Student entry</p>
           <h2>開始聽寫</h2>
           ${fixedTest ? `<div class="test-summary"><strong>${escapeHtml(test.title)}</strong><span>${escapeHtml(test.className || "現場聽寫")}</span></div>` : `
-            <div class="field"><label for="test-title">聽寫名稱</label><input id="test-title" name="title" maxlength="80" required placeholder="例如：第六課生詞聽寫" /></div>
-            <div class="field"><label for="class-name">班級</label><input id="class-name" name="className" maxlength="60" placeholder="例如：三年二班" /></div>`}
+            <div class="field"><label for="test-title">聽寫名稱（選填）</label><input id="test-title" name="title" maxlength="80" placeholder="例如：第六課生詞聽寫" /></div>
+            <div class="field"><label for="class-name">班級（選填）</label><input id="class-name" name="className" maxlength="60" placeholder="例如：三年二班" /></div>`}
           <div class="field"><label for="student-name">真實姓名</label><input id="student-name" name="name" maxlength="40" autocomplete="off" autocorrect="off" spellcheck="false" required placeholder="例如：陳小明" /></div>
           <div class="notice">開始後請勿切換畫面或貼上文字。你的姓名與裝置代碼會顯示在浮水印中。</div>
           <button class="button full" type="submit">確認姓名並開始</button>
@@ -114,10 +114,9 @@ function renderHome() {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     state.name = String(formData.get("name") || "").trim().slice(0, 40);
-    state.title = fixedTest ? test.title : String(formData.get("title") || "").trim().slice(0, 80);
+    state.title = fixedTest ? test.title : String(formData.get("title") || "").trim().slice(0, 80) || "中文聽寫";
     state.className = fixedTest ? test.className : String(formData.get("className") || "").trim().slice(0, 60);
     if (state.name.length < 2) return showToast("請輸入完整姓名。");
-    if (!state.title) return showToast("請輸入聽寫名稱。");
     renderWriting();
   });
 
