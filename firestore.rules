@@ -10,6 +10,16 @@ service cloud.firestore {
       return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
     }
 
+    function isOpenTest(testId) {
+      return exists(/databases/$(database)/documents/tests/$(testId))
+        && get(/databases/$(database)/documents/tests/$(testId)).data.status == 'open'
+        && (
+          !get(/databases/$(database)/documents/tests/$(testId)).data.keys().hasAny(['closesAt'])
+          || get(/databases/$(database)/documents/tests/$(testId)).data.closesAt == null
+          || request.time < get(/databases/$(database)/documents/tests/$(testId)).data.closesAt
+        );
+    }
+
     match /admins/{adminEmail} {
       allow read: if signedIn() && request.auth.token.email == adminEmail;
       allow create: if signedIn()
@@ -41,6 +51,7 @@ service cloud.firestore {
     match /submissions/{submissionId} {
       allow create: if signedIn()
         && request.resource.data.userId == request.auth.uid
+        && isOpenTest(request.resource.data.testId)
         && submissionId == request.resource.data.testId + '_' + request.auth.uid
         && request.resource.data.studentEmail == request.auth.token.email
         && request.resource.data.status == 'submitted'

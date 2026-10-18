@@ -13,13 +13,16 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   getFirestore,
   onSnapshot,
   query,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
-  where
+  where,
+  writeBatch
 } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
 import { firebaseConfig, teacherEmails } from "./firebase-config.js";
 
@@ -40,6 +43,7 @@ const state = {
   studentName: "",
   unsubscribers: [],
   listeners: [],
+  timers: [],
   startedAt: 0,
   keyEvents: 0,
   pasteAttempts: 0,
@@ -70,6 +74,30 @@ function formatTime(value) {
   }).format(date);
 }
 
+function minimumClosingTime() {
+  const date = new Date(Date.now() + 60000);
+  return formatDateTimeInput(date);
+}
+
+function formatDateTimeInput(value) {
+  if (!value) return "";
+  const date = typeof value.toDate === "function" ? value.toDate() : new Date(value);
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 16);
+}
+
+function closingTimeMillis(test) {
+  if (!test.closesAt) return null;
+  return typeof test.closesAt.toMillis === "function"
+    ? test.closesAt.toMillis()
+    : new Date(test.closesAt).getTime();
+}
+
+function isTestOpen(test) {
+  const closesAt = closingTimeMillis(test);
+  return test.status === "open" && (!closesAt || closesAt > Date.now());
+}
+
 function getDeviceCode() {
   let deviceId = localStorage.getItem("tingxie_firebase_device");
   if (!deviceId) {
@@ -94,6 +122,8 @@ function cleanupView() {
   state.unsubscribers = [];
   state.listeners.forEach(({ target, type, handler }) => target.removeEventListener(type, handler));
   state.listeners = [];
+  state.timers.forEach((timer) => clearTimeout(timer));
+  state.timers = [];
   document.body.classList.remove("exam-mode");
 }
 
@@ -248,6 +278,17 @@ async function createUniqueTestCode() {
   throw new Error("無法產生測驗代碼，請再試一次。");
 }
 
+async function deleteTestAndSubmissions(testId) {
+  const submissionsSnapshot = await getDocs(query(collection(db, "submissions"), where("testId", "==", testId)));
+  const references = submissionsSnapshot.docs.map((submission) => submission.ref);
+  references.push(doc(db, "tests", testId));
+  for (let start = 0; start < references.length; start += 450) {
+    const batch = writeBatch(db);
+    references.slice(start, start + 450).forEach((reference) => batch.delete(reference));
+    await batch.commit();
+  }
+}
+
 function renderTeacherTests() {
   cleanupView();
   app.innerHTML = roleShell(`
@@ -257,6 +298,7 @@ function renderTeacherTests() {
         <h3>建立新測驗</h3>
         <div class="field"><label for="test-title">聽寫名稱</label><input id="test-title" name="title" maxlength="80" required placeholder="例如：第六課生詞聽寫" /></div>
         <div class="field"><label for="class-name">班級（選填）</label><input id="class-name" name="className" maxlength="60" placeholder="例如：三年二班" /></div>
+        <div class="field"><label for="closes-at">自動關閉時間（選填）</label><input id="closes-at" name="closesAt" type="datetime-local" min="${minimumClosingTime()}" /><small>時間到後，學生將無法再加入這份測驗。</small></div>
         <div class="field"><label for="instructions">作答說明（選填）</label><textarea id="instructions" name="instructions" maxlength="300" placeholder="例如：老師每題播放兩次。"></textarea></div>
         <button class="button full" type="submit">建立測驗代碼</button>
       </form>
@@ -271,9 +313,15 @@ function renderTeacherTests() {
     const button = form.querySelector("button[type=submit]");
     const data = new FormData(form);
     const title = String(data.get("title") || "").trim().slice(0, 80);
+    const closesAtValue = String(data.get("closesAt") || "");
+    const closesAtDate = closesAtValue ? new Date(closesAtValue) : null;
     if (!title) {
       titleInput.setCustomValidity("請輸入聽寫名稱。");
       titleInput.reportValidity();
+      return;
+    }
+    if (closesAtDate && (!Number.isFinite(closesAtDate.getTime()) || closesAtDate.getTime() <= Date.now())) {
+      showToast("自動關閉時間必須晚於現在。");
       return;
     }
     button.disabled = true;
@@ -284,6 +332,7 @@ function renderTeacherTests() {
         title,
         className: String(data.get("className") || "").trim().slice(0, 60),
         instructions: String(data.get("instructions") || "").trim().slice(0, 300),
+        closesAt: closesAtDate ? Timestamp.fromDate(closesAtDate) : null,
         status: "open",
         createdBy: state.user.uid,
         createdAt: serverTimestamp(),
@@ -300,24 +349,82 @@ function renderTeacherTests() {
   const unsubscribe = onSnapshot(collection(db, "tests"), (snapshot) => {
     const tests = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))
       .sort((left, right) => (right.createdAt?.seconds || 0) - (left.createdAt?.seconds || 0));
+    state.timers.forEach((timer) => clearTimeout(timer));
+    state.timers = [];
+    const nextClosingTime = tests
+      .filter((test) => test.status === "open" && closingTimeMillis(test) > Date.now())
+      .reduce((earliest, test) => Math.min(earliest, closingTimeMillis(test)), Number.POSITIVE_INFINITY);
+    if (Number.isFinite(nextClosingTime)) {
+      state.timers.push(setTimeout(renderTeacherTests, Math.min(nextClosingTime - Date.now() + 250, 2147483647)));
+    }
     document.querySelector("#test-count").textContent = `${tests.length} 份`;
     const list = document.querySelector("#test-list");
-    list.innerHTML = tests.length ? tests.map((test) => `
+    list.innerHTML = tests.length ? tests.map((test) => {
+      const open = isTestOpen(test);
+      return `
       <article class="record-card">
-        <div class="record-top"><div><h3>${escapeHtml(test.title)}</h3><span class="meta">${escapeHtml(test.className || "未指定班級")} · ${formatTime(test.createdAt)}</span></div><span class="status ${test.status}">${test.status === "open" ? "開放中" : "已關閉"}</span></div>
+        <div class="record-top"><div><h3>${escapeHtml(test.title)}</h3><span class="meta">${escapeHtml(test.className || "未指定班級")} · ${formatTime(test.createdAt)}</span>${test.closesAt ? `<span class="scheduled-close">自動關閉：${formatTime(test.closesAt)}</span>` : ""}</div><span class="status ${open ? "open" : "closed"}">${open ? "開放中" : "已關閉"}</span></div>
         <div class="test-code">${test.code}</div>
-        <div class="row-actions"><button class="button small" data-view-test="${test.id}">查看交卷</button><button class="button secondary small" data-copy-code="${test.code}">複製代碼</button><button class="button secondary small" data-toggle-test="${test.id}" data-status="${test.status}">${test.status === "open" ? "關閉測驗" : "重新開放"}</button></div>
-      </article>`).join("") : '<div class="empty-state">還沒有測驗。建立第一份測驗後，學生即可加入。</div>';
+        ${open ? `<div class="test-schedule"><label for="close-${test.id}">設定關閉時間</label><input id="close-${test.id}" data-close-time type="datetime-local" min="${minimumClosingTime()}" value="${formatDateTimeInput(test.closesAt)}" /><button class="button secondary small" data-save-close="${test.id}">儲存時間</button>${test.closesAt ? `<button class="text-button" data-clear-close="${test.id}">清除時間</button>` : ""}</div>` : ""}
+        <div class="row-actions"><button class="button small" data-view-test="${test.id}">查看交卷</button><button class="button secondary small" data-copy-code="${test.code}">複製代碼</button><button class="button secondary small" data-toggle-test="${test.id}" data-status="${open ? "open" : "closed"}">${open ? "關閉測驗" : "重新開放"}</button><button class="button danger small" data-delete-test="${test.id}" data-delete-title="${escapeHtml(test.title)}">刪除</button></div>
+      </article>`;
+    }).join("") : '<div class="empty-state">還沒有測驗。建立第一份測驗後，學生即可加入。</div>';
     list.querySelectorAll("[data-view-test]").forEach((button) => button.addEventListener("click", () => renderTeacherSubmissions(button.dataset.viewTest)));
     list.querySelectorAll("[data-copy-code]").forEach((button) => button.addEventListener("click", async () => {
       await navigator.clipboard.writeText(button.dataset.copyCode);
       showToast("測驗代碼已複製。");
     }));
     list.querySelectorAll("[data-toggle-test]").forEach((button) => button.addEventListener("click", async () => {
+      const shouldClose = button.dataset.status === "open";
       await updateDoc(doc(db, "tests", button.dataset.toggleTest), {
-        status: button.dataset.status === "open" ? "closed" : "open",
+        status: shouldClose ? "closed" : "open",
+        ...(!shouldClose ? { closesAt: null } : {}),
         updatedAt: serverTimestamp()
       });
+    }));
+    list.querySelectorAll("[data-save-close]").forEach((button) => button.addEventListener("click", async () => {
+      const input = button.closest(".record-card").querySelector("[data-close-time]");
+      const closeDate = input.value ? new Date(input.value) : null;
+      if (!closeDate || !Number.isFinite(closeDate.getTime()) || closeDate.getTime() <= Date.now()) {
+        showToast("請選擇晚於現在的關閉時間。");
+        return;
+      }
+      button.disabled = true;
+      try {
+        await updateDoc(doc(db, "tests", button.dataset.saveClose), {
+          closesAt: Timestamp.fromDate(closeDate),
+          updatedAt: serverTimestamp()
+        });
+        showToast(`測驗將於 ${formatTime(closeDate)} 自動關閉。`);
+      } catch (error) {
+        showToast(`設定失敗：${error.message}`);
+        button.disabled = false;
+      }
+    }));
+    list.querySelectorAll("[data-clear-close]").forEach((button) => button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await updateDoc(doc(db, "tests", button.dataset.clearClose), {
+          closesAt: null,
+          updatedAt: serverTimestamp()
+        });
+        showToast("自動關閉時間已清除。");
+      } catch (error) {
+        showToast(`清除失敗：${error.message}`);
+        button.disabled = false;
+      }
+    }));
+    list.querySelectorAll("[data-delete-test]").forEach((button) => button.addEventListener("click", async () => {
+      const confirmed = window.confirm(`確定要刪除「${button.dataset.deleteTitle}」嗎？\n\n所有學生交卷、成績和訂正也會永久刪除，無法復原。`);
+      if (!confirmed) return;
+      button.disabled = true;
+      try {
+        await deleteTestAndSubmissions(button.dataset.deleteTest);
+        showToast("測驗及相關交卷已刪除。");
+      } catch (error) {
+        showToast(`刪除失敗：${error.message}`);
+        button.disabled = false;
+      }
     }));
   }, (error) => showToast(`讀取測驗失敗：${error.message}`));
   state.unsubscribers.push(unsubscribe);
@@ -493,7 +600,7 @@ function renderStudentHome() {
       const testSnapshot = await getDoc(doc(db, "tests", code));
       if (!testSnapshot.exists()) throw new Error("找不到這個測驗代碼。");
       const test = { id: testSnapshot.id, ...testSnapshot.data() };
-      if (test.status !== "open") throw new Error("老師已關閉這個測驗。");
+      if (!isTestOpen(test)) throw new Error("老師已關閉這個測驗。");
       state.activeTest = test;
       state.studentName = String(data.get("studentName") || "").trim().slice(0, 40);
       renderWriting();
